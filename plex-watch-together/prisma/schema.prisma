@@ -1,0 +1,176 @@
+// Plex Watch Together - Database Schema
+// Modern database schema for secure watch parties with Plex integration
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// User management with NextAuth.js integration
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String?
+  password      String?   // Hashed password for credentials auth
+  image         String?
+  emailVerified DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Plex integration
+  plexUsername  String?
+  plexToken     String?   // Encrypted Plex authentication token
+  plexServerId  String?   // User's primary Plex server
+  plexUrl       String?   // Plex server URL
+
+  // Relationships
+  accounts      Account[]
+  sessions      Session[]
+  createdRooms  WatchRoom[] @relation("RoomCreator")
+  roomMembers   RoomMember[]
+  messages      ChatMessage[]
+
+  @@map("users")
+}
+
+// NextAuth.js Account model
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+// NextAuth.js Session model
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+// Watch room for synchronized viewing
+model WatchRoom {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  isPublic    Boolean  @default(false)
+  inviteCode  String   @unique @default(cuid())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Room settings
+  allowChat   Boolean @default(true)
+  maxMembers  Int     @default(10)
+  isActive    Boolean @default(true)
+
+  // Current media being watched
+  currentMediaId       String?
+  currentMediaTitle    String?
+  currentMediaType     String? // movie, episode, etc.
+  currentPosition      Float   @default(0) // Current playback position in seconds
+  isPlaying            Boolean @default(false)
+  lastSyncAt           DateTime @default(now())
+
+  // Plex metadata
+  plexRatingKey        String?
+  plexMachineId        String?
+  plexLibrarySectionId String?
+
+  // Relationships
+  creatorId    String
+  creator      User           @relation("RoomCreator", fields: [creatorId], references: [id])
+  members      RoomMember[]
+  messages     ChatMessage[]
+  syncEvents   SyncEvent[]
+
+  @@map("watch_rooms")
+}
+
+// Room membership and permissions
+model RoomMember {
+  id       String   @id @default(cuid())
+  joinedAt DateTime @default(now())
+  
+  // Permissions
+  canControl Boolean @default(false) // Can play/pause/seek
+  canInvite  Boolean @default(false) // Can generate invite links
+  isActive   Boolean @default(true)
+
+  // User status in room
+  lastSeen     DateTime @default(now())
+  currentPosition Float @default(0) // User's current position for sync
+
+  // Relationships
+  userId String
+  roomId String
+  user   User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  room   WatchRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, roomId])
+  @@map("room_members")
+}
+
+// Real-time chat messages
+model ChatMessage {
+  id        String   @id @default(cuid())
+  content   String
+  createdAt DateTime @default(now())
+
+  // Message types: text, system, media_change, user_join, user_leave
+  type      String   @default("text")
+
+  // Relationships
+  userId String
+  roomId String
+  user   User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  room   WatchRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@map("chat_messages")
+}
+
+// Synchronization events for debugging and analytics
+model SyncEvent {
+  id        String   @id @default(cuid())
+  eventType String   // play, pause, seek, buffer
+  timestamp DateTime @default(now())
+  position  Float    // Position at time of event
+  userId    String   // User who triggered the event
+
+  // Relationships
+  roomId String
+  room   WatchRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@map("sync_events")
+}
+
+// Verification tokens for NextAuth.js
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
