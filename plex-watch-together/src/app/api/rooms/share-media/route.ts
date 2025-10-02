@@ -29,16 +29,19 @@ export async function POST(request: NextRequest) {
     }
 
     // Update room with currently playing media
-    await prisma.room.update({
+    await prisma.watchRoom.update({
       where: { id: roomId },
       data: {
-        currentMedia: JSON.stringify(media),
+        currentMediaId: media.ratingKey,
+        currentMediaTitle: media.title,
+        currentMediaType: media.type,
+        plexRatingKey: media.ratingKey,
         updatedAt: new Date()
       }
     });
 
     // Create a message about the media sharing
-    await prisma.message.create({
+    await prisma.chatMessage.create({
       data: {
         content: `🎬 Started playing: ${media.title}`,
         roomId: roomId,

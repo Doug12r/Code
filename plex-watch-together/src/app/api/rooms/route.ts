@@ -151,3 +151,73 @@ export async function GET(request: NextRequest) {
     )
   }
 }
+
+export async function DELETE(request: NextRequest) {
+  try {
+    const session = await getServerSession(authOptions)
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    const { searchParams } = new URL(request.url)
+    const roomId = searchParams.get('roomId')
+    
+    if (!roomId) {
+      return NextResponse.json({ error: 'Room ID is required' }, { status: 400 })
+    }
+
+    // Verify user owns the room
+    const room = await prisma.watchRoom.findUnique({
+      where: { id: roomId },
+      include: {
+        creator: true,
+        _count: {
+          select: {
+            members: true,
+          }
+        }
+      }
+    })
+
+    if (!room) {
+      return NextResponse.json({ error: 'Room not found' }, { status: 404 })
+    }
+
+    if (room.creatorId !== session.user.id) {
+      return NextResponse.json({ error: 'Only room creator can delete the room' }, { status: 403 })
+    }
+
+    // Delete related records in correct order (FK constraints)
+    await prisma.$transaction([
+      // Delete sync events
+      prisma.syncEvent.deleteMany({
+        where: { roomId }
+      }),
+      // Delete chat messages
+      prisma.chatMessage.deleteMany({
+        where: { roomId }
+      }),
+      // Delete room members
+      prisma.roomMember.deleteMany({
+        where: { roomId }
+      }),
+      // Delete the room itself
+      prisma.watchRoom.delete({
+        where: { id: roomId }
+      })
+    ])
+
+    return NextResponse.json({
+      message: 'Room deleted successfully',
+      roomId: roomId,
+      memberCount: room._count.members
+    })
+
+  } catch (error) {
+    console.error('Room deletion error:', error)
+    return NextResponse.json(
+      { error: 'Failed to delete room' },
+      { status: 500 }
+    )
+  }
+}

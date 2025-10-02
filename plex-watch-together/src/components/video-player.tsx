@@ -5,6 +5,13 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
+import dynamic from 'next/dynamic';
+
+// Dynamically import the enhanced video player to avoid SSR issues
+const EnhancedVideoPlayer = dynamic(() => import('./enhanced-video-player'), { 
+  ssr: false,
+  loading: () => <div className="w-full h-full bg-gray-900 flex items-center justify-center text-white">Loading enhanced player...</div>
+});
 import { 
   Play, 
   Pause, 
@@ -52,10 +59,22 @@ export default function VideoPlayer({
   isHost = false, 
   onClose 
 }: VideoPlayerProps) {
+  
+  console.log('VideoPlayer received props:', {
+    hasMedia: !!media,
+    mediaTitle: media?.title,
+    plexUrl,
+    hasPlexToken: !!plexToken,
+    plexTokenLength: plexToken?.length,
+    roomId,
+    isHost
+  });
   const videoRef = useRef<HTMLVideoElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [useEnhancedPlayer, setUseEnhancedPlayer] = useState(false);
+  const [videoJsPlayer, setVideoJsPlayer] = useState<any>(null);
   const [volume, setVolume] = useState(1);
   const [isMuted, setIsMuted] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -64,27 +83,35 @@ export default function VideoPlayer({
   const [streamUrl, setStreamUrl] = useState<string | null>(null);
 
   // Generate Plex streaming URL
-  const getStreamUrl = (media: PlexMedia) => {
-    if (!plexUrl || !plexToken) return null;
+  const getStreamUrl = (media: PlexMedia, forceTranscode = false) => {
+    if (!media || !media.key) {
+      console.error('Missing media or media.key:', media);
+      return null;
+    }
     
-    // For Plex streaming, we use the transcode endpoint
-    // This ensures compatibility across different formats and devices
-    const baseUrl = plexUrl.replace(/\/$/, '');
-    const params = new URLSearchParams({
-      'X-Plex-Token': plexToken,
-      'path': media.key,
-      'mediaIndex': '0',
-      'partIndex': '0',
-      'protocol': 'http',
-      'videoCodec': 'h264',
-      'audioCodec': 'aac',
-      'maxVideoBitrate': '4000',
-      'videoResolution': '1920x1080',
-      'directPlay': '0',
-      'directStream': '1'
+    console.log('Generating stream URL for media:', {
+      title: media.title,
+      key: media.key,
+      type: media.type,
+      ratingKey: media.ratingKey,
+      forceTranscode
     });
     
-    return `${baseUrl}/video/:/transcode/universal/start.m3u8?${params.toString()}`;
+    // Use our proxy endpoint to handle Plex authentication
+    const params = new URLSearchParams({
+      key: media.key
+    });
+    
+    // Force transcoding when using enhanced player or when explicitly requested
+    if (forceTranscode || useEnhancedPlayer) {
+      params.set('transcode', 'force');
+      console.log('🎬 Forcing server-side transcoding for better compatibility');
+    }
+    
+    const proxyUrl = `/api/video/proxy?${params.toString()}`;
+    console.log('Generated proxy URL:', proxyUrl);
+    
+    return proxyUrl;
   };
 
   // Format duration for display
@@ -119,11 +146,11 @@ export default function VideoPlayer({
 
   // Initialize video player when media changes
   useEffect(() => {
-    if (media && plexUrl && plexToken) {
+    if (media) {
       setLoading(true);
       setError(null);
       
-      const url = getStreamUrl(media);
+      const url = getStreamUrl(media, useEnhancedPlayer);
       if (url) {
         setStreamUrl(url);
       } else {
@@ -131,7 +158,7 @@ export default function VideoPlayer({
         setLoading(false);
       }
     }
-  }, [media, plexUrl, plexToken]);
+  }, [media, plexUrl, plexToken, useEnhancedPlayer]);
 
   // Video event handlers
   const handleLoadedData = () => {
@@ -155,14 +182,36 @@ export default function VideoPlayer({
     setIsPlaying(false);
   };
 
-  const handleError = () => {
-    setError('Failed to load video. Please check your Plex server connection.');
+  const handleError = (e: any) => {
+    console.error('Video loading error:', e);
+    console.error('Video error details:', {
+      error: e.target?.error,
+      networkState: e.target?.networkState,
+      readyState: e.target?.readyState,
+      src: e.target?.src
+    });
+    
+    // If native HTML5 video fails, try the enhanced Video.js player
+    if (!useEnhancedPlayer) {
+      console.log('Native HTML5 video failed, switching to enhanced Video.js player...');
+      setUseEnhancedPlayer(true);
+      setError(''); // Clear error since we're trying enhanced player
+      return;
+    }
+    
+    setError(`Failed to load video: ${e.target?.error?.message || 'Unknown error'}. Check browser console for details.`);
     setLoading(false);
   };
 
   // Control functions
   const togglePlayPause = () => {
-    if (videoRef.current) {
+    if (useEnhancedPlayer && videoJsPlayer) {
+      if (isPlaying) {
+        videoJsPlayer.pause();
+      } else {
+        videoJsPlayer.play();
+      }
+    } else if (videoRef.current) {
       if (isPlaying) {
         videoRef.current.pause();
       } else {
@@ -179,7 +228,11 @@ export default function VideoPlayer({
   };
 
   const toggleMute = () => {
-    if (videoRef.current) {
+    if (useEnhancedPlayer && videoJsPlayer) {
+      const newMuted = !isMuted;
+      videoJsPlayer.muted(newMuted);
+      setIsMuted(newMuted);
+    } else if (videoRef.current) {
       const newMuted = !isMuted;
       videoRef.current.muted = newMuted;
       setIsMuted(newMuted);
@@ -187,7 +240,11 @@ export default function VideoPlayer({
   };
 
   const handleVolumeChange = (newVolume: number) => {
-    if (videoRef.current) {
+    if (useEnhancedPlayer && videoJsPlayer) {
+      videoJsPlayer.volume(newVolume);
+      setVolume(newVolume);
+      setIsMuted(newVolume === 0);
+    } else if (videoRef.current) {
       videoRef.current.volume = newVolume;
       setVolume(newVolume);
       setIsMuted(newVolume === 0);
@@ -195,20 +252,28 @@ export default function VideoPlayer({
   };
 
   const skipBack = () => {
-    if (videoRef.current) {
+    if (useEnhancedPlayer && videoJsPlayer) {
+      videoJsPlayer.currentTime(Math.max(0, currentTime - 10));
+    } else if (videoRef.current) {
       videoRef.current.currentTime = Math.max(0, currentTime - 10);
     }
   };
 
   const skipForward = () => {
-    if (videoRef.current) {
+    if (useEnhancedPlayer && videoJsPlayer) {
+      videoJsPlayer.currentTime(Math.min(duration, currentTime + 10));
+    } else if (videoRef.current) {
       videoRef.current.currentTime = Math.min(duration, currentTime + 10);
     }
   };
 
   const toggleFullscreen = () => {
     if (!document.fullscreenElement) {
-      videoRef.current?.requestFullscreen();
+      if (useEnhancedPlayer && videoJsPlayer) {
+        videoJsPlayer.requestFullscreen();
+      } else {
+        videoRef.current?.requestFullscreen();
+      }
       setIsFullscreen(true);
     } else {
       document.exitFullscreen();
@@ -273,27 +338,88 @@ export default function VideoPlayer({
           
           {error && (
             <div className="absolute inset-0 flex items-center justify-center text-white">
-              <div className="text-center">
+              <div className="text-center max-w-md p-4">
                 <p className="text-red-400 mb-4">{error}</p>
-                <Button onClick={onClose} variant="outline">
-                  Close Player
-                </Button>
+                <div className="text-xs text-gray-300 mb-4 space-y-1 text-left">
+                  <p><strong>Media:</strong> {media.title}</p>
+                  <p><strong>Key:</strong> {media.key}</p>
+                  <p><strong>Rating Key:</strong> {media.ratingKey}</p>
+                  <p><strong>Type:</strong> {media.type}</p>
+                  <p><strong>Stream URL:</strong> {streamUrl}</p>
+                  <p><strong>Plex URL:</strong> {plexUrl || 'Not available'}</p>
+                  <p><strong>Has Token:</strong> {!!plexToken}</p>
+                </div>
+                <div className="flex gap-2 justify-center">
+                  <Button 
+                    onClick={() => {
+                      setError(null);
+                      setLoading(true);
+                      // Retry loading
+                      const url = getStreamUrl(media);
+                      if (url) setStreamUrl(url);
+                    }} 
+                    size="sm"
+                  >
+                    Retry
+                  </Button>
+                  <Button onClick={onClose} variant="outline" size="sm">
+                    Close Player
+                  </Button>
+                </div>
               </div>
             </div>
           )}
           
           {streamUrl && !error && (
-            <video
-              ref={videoRef}
-              src={streamUrl}
-              className="w-full h-full object-contain"
-              onLoadedData={handleLoadedData}
-              onTimeUpdate={handleTimeUpdate}
-              onPlay={handlePlay}
-              onPause={handlePause}
-              onError={handleError}
-              crossOrigin="anonymous"
-            />
+            <>
+              {useEnhancedPlayer ? (
+                <div className="w-full h-full">
+                  <EnhancedVideoPlayer
+                    src={streamUrl}
+                    className="w-full h-full"
+                    onReady={(player: any) => {
+                      console.log('Enhanced Video.js player ready');
+                      setVideoJsPlayer(player);
+                      setLoading(false);
+                      
+                      // Set up event listeners for the Video.js player
+                      player.on('play', () => setIsPlaying(true));
+                      player.on('pause', () => setIsPlaying(false));
+                      player.on('timeupdate', () => {
+                        setCurrentTime(player.currentTime());
+                        setDuration(player.duration());
+                      });
+                      
+                      // Set poster if available
+                      const posterUrl = media?.thumb ? `${plexUrl}${media.thumb}?X-Plex-Token=${plexToken}` : undefined;
+                      if (posterUrl) {
+                        player.poster(posterUrl);
+                      }
+                    }}
+                    onError={(error: any) => {
+                      console.error('Enhanced player error:', error);
+                      setError(`Enhanced player failed: ${error.message || 'Unknown error'}`);
+                      setLoading(false);
+                    }}
+                  />
+                </div>
+              ) : (
+                <video
+                  ref={videoRef}
+                  src={streamUrl}
+                  className="w-full h-full object-contain"
+                  onLoadedData={handleLoadedData}
+                  onTimeUpdate={handleTimeUpdate}
+                  onPlay={handlePlay}
+                  onPause={handlePause}
+                  onError={handleError}
+                  crossOrigin="anonymous"
+                  controls={false}
+                  playsInline
+                  preload="metadata"
+                />
+              )}
+            </>
           )}
           
           {/* Video Controls Overlay */}
@@ -380,6 +506,22 @@ export default function VideoPlayer({
                   >
                     <Share2 className="h-4 w-4" />
                     <Users className="h-4 w-4" />
+                  </Button>
+                )}
+                
+                {!useEnhancedPlayer && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      console.log('Manually switching to enhanced Video.js player...');
+                      setUseEnhancedPlayer(true);
+                      setError(''); // Clear any existing errors
+                    }}
+                    className="text-white hover:bg-white/20"
+                    title="Switch to Enhanced Player (Video.js)"
+                  >
+                    🎯
                   </Button>
                 )}
                 

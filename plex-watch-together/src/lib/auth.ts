@@ -4,6 +4,7 @@ import { prisma } from './prisma'
 import CredentialsProvider from 'next-auth/providers/credentials'
 import GoogleProvider from 'next-auth/providers/google'
 import bcrypt from 'bcryptjs'
+import { encryptionService } from './encryption'
 
 export const authOptions: NextAuthOptions = {
   adapter: PrismaAdapter(prisma),
@@ -52,19 +53,33 @@ export const authOptions: NextAuthOptions = {
   ],
   session: {
     strategy: 'jwt',
-    maxAge: 30 * 24 * 60 * 60, // 30 days
+    maxAge: 7 * 24 * 60 * 60, // 7 days for better security
+    updateAge: 24 * 60 * 60, // Update session every 24 hours
   },
   pages: {
     signIn: '/auth/signin',
   },
   callbacks: {
-    async jwt({ token, user, account }) {
+    async jwt({ token, user, account, trigger }) {
       if (user) {
         token.id = user.id
+        token.lastLogin = Date.now()
       }
       if (account?.provider === 'credentials') {
         token.provider = 'credentials'
       }
+      
+      // Add security metadata
+      if (trigger === 'signIn' || trigger === 'signUp') {
+        token.sessionId = encryptionService.generateSecureToken()
+        token.lastActivity = Date.now()
+      }
+      
+      // Update activity timestamp on token refresh
+      if (trigger === 'update') {
+        token.lastActivity = Date.now()
+      }
+      
       return token
     },
     async session({ session, token }) {

@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import { Providers } from '@/components/providers'
@@ -11,8 +11,12 @@ export const metadata: Metadata = {
   description: "Share movies with friends using your Plex server - secure, synchronized, and fun",
   keywords: ["plex", "watch together", "movies", "streaming", "sync"],
   authors: [{ name: "Plex Watch Together" }],
-  viewport: "width=device-width, initial-scale=1",
   robots: "index, follow",
+};
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
 };
 
 export default function RootLayout({

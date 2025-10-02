@@ -31,7 +31,12 @@ interface PlexSetupModalProps {
 }
 
 export function PlexSetupModal({ isOpen, onOpenChange, onPlexConnected }: PlexSetupModalProps) {
-  const [serverUrl, setServerUrl] = useState('https://douglinux.duckdns.org:443')
+  // 🚀 Smart defaults: localhost for development, reverse proxy for production
+  const [serverUrl, setServerUrl] = useState(
+    process.env.NODE_ENV === 'development' 
+      ? 'http://localhost:32400' 
+      : 'https://douglinux.duckdns.org:443'
+  )
   const [claimToken, setClaimToken] = useState('')
   const [isConnecting, setIsConnecting] = useState(false)
   const [connectionStatus, setConnectionStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle')
@@ -171,12 +176,17 @@ export function PlexSetupModal({ isOpen, onOpenChange, onPlexConnected }: PlexSe
 
   const testAlternativeUrl = () => {
     const currentUrl = serverUrl
-    if (currentUrl.includes('https://douglinux.duckdns.org:443')) {
-      setServerUrl('http://douglinux.duckdns.org:80')
-    } else {
+    // 🌐 Smart URL cycling: localhost → https → http
+    if (currentUrl.includes('localhost:32400')) {
       setServerUrl('https://douglinux.duckdns.org:443')
+      toast.info('Switched to HTTPS reverse proxy')
+    } else if (currentUrl.includes('https://douglinux.duckdns.org:443')) {
+      setServerUrl('http://douglinux.duckdns.org:80')
+      toast.info('Switched to HTTP reverse proxy')
+    } else {
+      setServerUrl('http://localhost:32400')
+      toast.info('Switched to localhost (fastest)')
     }
-    toast.info('Switched to alternative server URL')
   }
 
   return (
@@ -235,38 +245,72 @@ export function PlexSetupModal({ isOpen, onOpenChange, onPlexConnected }: PlexSe
           <div className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="server-url">Plex Server URL</Label>
-              <div className="flex space-x-2">
+              <div className="space-y-2">
                 <Input
                   id="server-url"
                   value={serverUrl}
                   onChange={(e) => setServerUrl(e.target.value)}
                   placeholder="https://your-plex-server:32400"
                 />
-                <Button
-                  variant="outline"
-                  onClick={testConnection}
-                  disabled={isTesting || !serverUrl.trim()}
-                  type="button"
-                >
-                  {isTesting ? (
-                    <>
-                      <RefreshCwIcon className="h-4 w-4 mr-2 animate-spin" />
-                      Testing...
-                    </>
-                  ) : (
-                    'Test Connection'
-                  )}
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={testAlternativeUrl}
-                  type="button"
-                >
-                  Switch URL
-                </Button>
+                
+                {/* Quick Preset Buttons */}
+                <div className="flex flex-wrap gap-2 text-xs">
+                  <Button
+                    variant={serverUrl.includes('localhost') ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => {
+                      setServerUrl('http://localhost:32400')
+                      toast.success('Set to localhost - fastest for development!')
+                    }}
+                    type="button"
+                  >
+                    🚀 Localhost
+                  </Button>
+                  <Button
+                    variant={serverUrl.includes('https://douglinux') ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => {
+                      setServerUrl('https://douglinux.duckdns.org:443')
+                      toast.info('Set to HTTPS reverse proxy')
+                    }}
+                    type="button"
+                  >
+                    🔒 HTTPS
+                  </Button>
+                  <Button
+                    variant={serverUrl.includes('http://douglinux') ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => {
+                      setServerUrl('http://douglinux.duckdns.org:80')
+                      toast.info('Set to HTTP reverse proxy')
+                    }}
+                    type="button"
+                  >
+                    🌐 HTTP
+                  </Button>
+                </div>
+                
+                <div className="flex space-x-2">
+                  <Button
+                    variant="outline"
+                    onClick={testConnection}
+                    disabled={isTesting || !serverUrl.trim()}
+                    type="button"
+                    className="flex-1"
+                  >
+                    {isTesting ? (
+                      <>
+                        <RefreshCwIcon className="h-4 w-4 mr-2 animate-spin" />
+                        Testing...
+                      </>
+                    ) : (
+                      'Test Connection'
+                    )}
+                  </Button>
+                </div>
               </div>
               <p className="text-xs text-muted-foreground">
-                Pre-configured with your server URLs. Click "Test Connection" to check accessibility.
+                🚀 <strong>Localhost (recommended for development)</strong> - Direct connection to local Plex server for fastest performance. Click "Switch URL" to cycle between options.
               </p>
               
               {/* Connection Test Results */}
@@ -398,7 +442,9 @@ export function PlexSetupModal({ isOpen, onOpenChange, onPlexConnected }: PlexSe
               <div className="space-y-1">
                 <p className="font-medium">2. Server URL:</p>
                 <p className="text-muted-foreground">
-                  Your server URLs are pre-configured. Try both if one doesn't work.
+                  🚀 <strong>Localhost</strong>: Ultra-fast direct connection (recommended for testing)<br />
+                  🔒 <strong>HTTPS</strong>: Secure reverse proxy connection<br />
+                  🌐 <strong>HTTP</strong>: Alternative reverse proxy if HTTPS fails
                 </p>
               </div>
               <div className="space-y-1">

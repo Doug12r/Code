@@ -16,13 +16,18 @@ import {
   LogOutIcon,
   ServerIcon,
   LinkIcon,
-  FilmIcon
+  FilmIcon,
+  TrashIcon,
+  CrownIcon,
+  ClockIcon,
+  AlertCircleIcon
 } from 'lucide-react'
 import { signOut } from 'next-auth/react'
 import { toast } from 'sonner'
 import MediaLibrary from './media-library'
 import { PlexSetupModal } from './plex-setup-modal'
 import { PlexDiagnostics } from './plex-diagnostics'
+import VideoPlayer from './video-player'
 
 interface DashboardProps {
   session: Session
@@ -41,6 +46,7 @@ export function DashboardContent({ session }: DashboardProps) {
   const [selectedMedia, setSelectedMedia] = useState<any>(null)
   const [showMediaLibrary, setShowMediaLibrary] = useState(false)
   const [showVideoPlayer, setShowVideoPlayer] = useState(false)
+  const [deletingRoomId, setDeletingRoomId] = useState<string | null>(null)
 
   useEffect(() => {
     fetchRooms()
@@ -93,11 +99,6 @@ export function DashboardContent({ session }: DashboardProps) {
       return
     }
 
-    if (!selectedMedia) {
-      toast.error('Please select media to watch')
-      return
-    }
-
     setIsCreating(true)
     try {
       const response = await fetch('/api/rooms', {
@@ -106,7 +107,8 @@ export function DashboardContent({ session }: DashboardProps) {
         body: JSON.stringify({ 
           name: newRoomName,
           isPublic: false,
-          maxMembers: 10
+          maxMembers: 10,
+          description: selectedMedia ? `Watching ${selectedMedia.title}` : undefined
         })
       })
 
@@ -114,6 +116,17 @@ export function DashboardContent({ session }: DashboardProps) {
 
       if (response.ok) {
         toast.success(`Room created! Invite code: ${data.room.inviteCode}`)
+        
+        // If we have selected media, share it to the room automatically
+        if (selectedMedia) {
+          try {
+            await shareMediaToRoom(data.room.id, selectedMedia)
+            toast.success(`${selectedMedia.title} shared to room!`)
+          } catch (error) {
+            console.error('Failed to share media:', error)
+          }
+        }
+        
         setNewRoomName('')
         setShowCreateRoom(false)
         fetchRooms()
@@ -125,6 +138,20 @@ export function DashboardContent({ session }: DashboardProps) {
     } finally {
       setIsCreating(false)
     }
+  }
+
+  const shareMediaToRoom = async (roomId: string, media: any) => {
+    const response = await fetch('/api/rooms/share-media', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ roomId, media })
+    })
+    
+    if (!response.ok) {
+      throw new Error('Failed to share media to room')
+    }
+    
+    return response.json()
   }
 
     const handleJoinRoom = async () => {
@@ -153,6 +180,44 @@ export function DashboardContent({ session }: DashboardProps) {
     } catch (error) {
       toast.error('Failed to join room')
       console.error('Join room error:', error)
+    }
+  }
+
+  const handleDeleteRoom = async (roomId: string, roomName: string) => {
+    if (!confirm(`Are you sure you want to delete the room "${roomName}"? This action cannot be undone.`)) {
+      return
+    }
+
+    setDeletingRoomId(roomId)
+    
+    try {
+      const response = await fetch(`/api/rooms?roomId=${roomId}`, {
+        method: 'DELETE'
+      })
+
+      const data = await response.json()
+
+      if (response.ok) {
+        toast.success(`Room "${roomName}" deleted successfully!`)
+        fetchRooms() // Refresh room list
+      } else {
+        toast.error(data.error || 'Failed to delete room')
+      }
+    } catch (error) {
+      toast.error('Failed to delete room')
+      console.error('Delete room error:', error)
+    } finally {
+      setDeletingRoomId(null)
+    }
+  }
+
+  const handleJoinRoomById = async (roomId: string) => {
+    try {
+      // For now, just redirect to room view - we'll implement this fully later
+      toast.info('Room joining functionality will be implemented with real-time features')
+    } catch (error) {
+      toast.error('Failed to join room')
+      console.error('Join room by ID error:', error)
     }
   }
 
@@ -224,11 +289,25 @@ export function DashboardContent({ session }: DashboardProps) {
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
+                  {selectedMedia && (
+                    <Card className="p-3 bg-muted/50">
+                      <div className="flex items-center gap-3">
+                        <FilmIcon className="h-6 w-6 text-primary" />
+                        <div>
+                          <p className="font-medium">{selectedMedia.title}</p>
+                          <p className="text-sm text-muted-foreground">
+                            {selectedMedia.year} • Will be shared with room
+                          </p>
+                        </div>
+                      </div>
+                    </Card>
+                  )}
+                  
                   <div className="space-y-2">
                     <Label htmlFor="room-name">Room Name</Label>
                     <Input
                       id="room-name"
-                      placeholder="Movie Night with Friends"
+                      placeholder={selectedMedia ? `Watching ${selectedMedia.title}` : "Movie Night with Friends"}
                       value={newRoomName}
                       onChange={(e) => setNewRoomName(e.target.value)}
                     />
@@ -312,34 +391,98 @@ export function DashboardContent({ session }: DashboardProps) {
                   </div>
                 ) : (
                   <div className="space-y-4">
-                    {rooms.map((room: any) => (
-                      <Card key={room.id} className="p-4 hover:shadow-md transition-shadow">
-                        <div className="flex justify-between items-start">
-                          <div className="space-y-2">
-                            <h3 className="font-medium">{room.name}</h3>
-                            {room.description && (
-                              <p className="text-sm text-muted-foreground">{room.description}</p>
-                            )}
-                            <div className="flex items-center space-x-4 text-sm text-muted-foreground">
-                              <span className="flex items-center space-x-1">
-                                <UsersIcon className="h-4 w-4" />
-                                <span>{room.memberCount}/{room.maxMembers}</span>
-                              </span>
-                              <span>Code: {room.inviteCode}</span>
-                              {room.currentMedia && (
-                                <span>📺 {room.currentMedia}</span>
+                    {rooms.map((room: any) => {
+                      const isOwner = room.creator?.id === session.user?.id
+                      const isActive = room.isActive
+                      
+                      return (
+                        <Card key={room.id} className={`p-4 hover:shadow-md transition-shadow ${
+                          isActive ? 'border-green-200 bg-green-50/50' : 'border-gray-200'
+                        }`}>
+                          <div className="flex justify-between items-start">
+                            <div className="space-y-2 flex-1">
+                              <div className="flex items-center space-x-2">
+                                <h3 className="font-medium">{room.name}</h3>
+                                {isOwner && (
+                                  <Badge variant="secondary" className="text-xs gap-1">
+                                    <CrownIcon className="h-3 w-3" />
+                                    Owner
+                                  </Badge>
+                                )}
+                                {isActive && (
+                                  <Badge variant="default" className="text-xs gap-1">
+                                    <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                                    Active
+                                  </Badge>
+                                )}
+                              </div>
+                              
+                              {room.description && (
+                                <p className="text-sm text-muted-foreground">{room.description}</p>
+                              )}
+                              
+                              <div className="flex items-center flex-wrap gap-x-4 gap-y-1 text-sm text-muted-foreground">
+                                <span className="flex items-center space-x-1">
+                                  <UsersIcon className="h-4 w-4" />
+                                  <span>{room.memberCount}/{room.maxMembers}</span>
+                                </span>
+                                <span className="flex items-center space-x-1">
+                                  <span>Code:</span>
+                                  <code className="bg-muted px-1 py-0.5 rounded text-xs font-mono">
+                                    {room.inviteCode}
+                                  </code>
+                                </span>
+                                {room.currentMedia && (
+                                  <span className="flex items-center space-x-1">
+                                    <FilmIcon className="h-4 w-4" />
+                                    <span className="truncate max-w-32">{room.currentMedia}</span>
+                                  </span>
+                                )}
+                                {room.updatedAt && (
+                                  <span className="flex items-center space-x-1">
+                                    <ClockIcon className="h-3 w-3" />
+                                    <span>{new Date(room.updatedAt).toLocaleDateString()}</span>
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                            
+                            <div className="flex space-x-2 ml-4">
+                              <Button 
+                                size="sm" 
+                                onClick={() => handleJoinRoomById(room.id)}
+                                disabled={room.memberCount >= room.maxMembers}
+                              >
+                                <PlayIcon className="h-4 w-4 mr-1" />
+                                {room.memberCount >= room.maxMembers ? 'Full' : 'Join'}
+                              </Button>
+                              
+                              {isOwner && (
+                                <Button 
+                                  size="sm" 
+                                  variant="destructive"
+                                  onClick={() => handleDeleteRoom(room.id, room.name)}
+                                  disabled={deletingRoomId === room.id}
+                                >
+                                  {deletingRoomId === room.id ? (
+                                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                  ) : (
+                                    <TrashIcon className="h-4 w-4" />
+                                  )}
+                                </Button>
                               )}
                             </div>
                           </div>
-                          <div className="flex space-x-2">
-                            <Button size="sm">
-                              <PlayIcon className="h-4 w-4 mr-1" />
-                              Join
-                            </Button>
-                          </div>
-                        </div>
-                      </Card>
-                    ))}
+                          
+                          {!isActive && (
+                            <div className="mt-3 p-2 bg-yellow-50 border border-yellow-200 rounded-md flex items-center gap-2">
+                              <AlertCircleIcon className="h-4 w-4 text-yellow-600" />
+                              <span className="text-sm text-yellow-700">Room is inactive</span>
+                            </div>
+                          )}
+                        </Card>
+                      )
+                    })}
                   </div>
                 )}
               </CardContent>
@@ -397,7 +540,9 @@ export function DashboardContent({ session }: DashboardProps) {
               <CardContent className="space-y-4">
                 <div className="flex justify-between">
                   <span className="text-sm text-muted-foreground">Rooms Created:</span>
-                  <span className="font-medium">0</span>
+                  <span className="font-medium">
+                    {rooms.filter((room: any) => room.creator?.id === session.user?.id).length}
+                  </span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-sm text-muted-foreground">Movies Watched:</span>
@@ -413,7 +558,7 @@ export function DashboardContent({ session }: DashboardProps) {
         </div>
 
         {/* Media Library Section */}
-        {plexStatus?.connected && (
+        {plexStatus?.connected && !showVideoPlayer && (
           <div className="space-y-6">
             <div className="flex items-center justify-between">
               <div>
@@ -441,6 +586,74 @@ export function DashboardContent({ session }: DashboardProps) {
               onSelectMedia={handleSelectMedia}
               plexToken={plexStatus.server?.token}
               plexUrl={plexStatus.server?.url}
+            />
+          </div>
+        )}
+
+        {/* 🎬 Video Player - Watch Together Experience */}
+        {showVideoPlayer && selectedMedia && plexStatus?.connected && (
+          <div className="space-y-6">
+            <div className="flex justify-between items-center">
+              <div>
+                <h2 className="text-2xl font-bold">Now Playing</h2>
+                <p className="text-muted-foreground">
+                  🚀 Ultra-fast localhost connection active
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <Button 
+                  onClick={() => setShowCreateRoom(true)}
+                  className="gap-2"
+                >
+                  <PlusIcon className="h-4 w-4" />
+                  Create Watch Party
+                </Button>
+                <Button 
+                  variant="outline" 
+                  onClick={handleCloseVideoPlayer}
+                >
+                  ← Back to Library
+                </Button>
+              </div>
+            </div>
+
+            {/* Quick Watch Party Actions */}
+            <Card className="p-4 bg-gradient-to-r from-primary/5 to-blue-500/5 border-primary/20">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">
+                    <UsersIcon className="h-5 w-5 text-primary" />
+                  </div>
+                  <div>
+                    <h3 className="font-semibold">Watch with Friends</h3>
+                    <p className="text-sm text-muted-foreground">
+                      Create a room to sync playback with friends
+                    </p>
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <Button 
+                    size="sm"
+                    onClick={() => setShowCreateRoom(true)}
+                  >
+                    Create Room
+                  </Button>
+                  <Button 
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setShowJoinRoom(true)}
+                  >
+                    Join Room
+                  </Button>
+                </div>
+              </div>
+            </Card>
+
+            <VideoPlayer
+              media={selectedMedia}
+              plexUrl={plexStatus.server?.url}
+              plexToken={plexStatus.server?.token}
+              onClose={handleCloseVideoPlayer}
             />
           </div>
         )}
