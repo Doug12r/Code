@@ -3,6 +3,24 @@ import { Server as NetServer } from 'http'
 import { NextApiResponse } from 'next'
 // Authentication imports will be used for middleware
 import { prisma } from '@/lib/prisma'
+import { getCachingService } from './caching-service'
+
+// Enhanced sync state for sub-second precision
+interface SyncState {
+  position: number
+  timestamp: number
+  isPlaying: boolean
+  playbackRate: number
+  syncVersion: number
+}
+
+// Connection health tracking
+interface ConnectionHealth {
+  latency: number
+  lastPing: number
+  isHealthy: boolean
+  joinedAt: number
+}
 
 export type SocketIONextApiResponse = {
   socket: {
@@ -65,9 +83,23 @@ export function initializeSocketIO(server: NetServer): SocketIOServer {
     addTrailingSlash: false,
     cors: {
       origin: process.env.NEXTAUTH_URL || 'http://localhost:3000',
-      methods: ['GET', 'POST']
-    }
+      methods: ['GET', 'POST'],
+      credentials: true
+    },
+    // Enhanced performance settings
+    transports: ['websocket', 'polling'],
+    pingTimeout: 60000,
+    pingInterval: 25000,
+    upgradeTimeout: 10000,
+    maxHttpBufferSize: 1e6, // 1MB
+    allowEIO3: true
   })
+  
+  // Enhanced caching with Redis and in-memory
+  const roomStates = new Map<string, SyncState>() // In-memory for speed
+  const connectionHealth = new Map<string, ConnectionHealth>()
+  const cache = getCachingService() // Redis cache for persistence
+  let globalSyncVersion = 0
 
   io.use(async (socket, next) => {
     try {
@@ -87,6 +119,36 @@ export function initializeSocketIO(server: NetServer): SocketIOServer {
 
   io.on('connection', (socket) => {
     console.log(`User ${socket.data.user?.name} connected:`, socket.id)
+    
+    // Initialize connection health tracking
+    connectionHealth.set(socket.id, {
+      latency: 0,
+      lastPing: Date.now(),
+      isHealthy: true,
+      joinedAt: Date.now()
+    })
+    
+    // Ping/Pong for latency monitoring
+    socket.on('ping', (data: { timestamp: number }) => {
+      const health = connectionHealth.get(socket.id)
+      if (health) {
+        health.latency = Date.now() - data.timestamp
+        health.lastPing = Date.now()
+        health.isHealthy = health.latency < 1000
+        
+        socket.emit('pong', {
+          timestamp: data.timestamp,
+          serverTime: Date.now()
+        })
+        
+        socket.emit('connection-quality', {
+          latency: health.latency,
+          quality: health.latency < 100 ? 'excellent' : 
+                  health.latency < 250 ? 'good' : 
+                  health.latency < 500 ? 'fair' : 'poor'
+        })
+      }
+    })
 
     // Join room event
     socket.on('join-room', async (data: { roomId: string }) => {
@@ -181,93 +243,207 @@ export function initializeSocketIO(server: NetServer): SocketIOServer {
       }
     })
 
-    // Media control events
-    socket.on('play', async (data: { position: number; timestamp: number }) => {
+    // Enhanced media control events with sync versioning
+    socket.on('play', async (data: { 
+      position: number
+      timestamp: number
+      playbackRate?: number
+      syncVersion?: number 
+    }) => {
       const roomId = socket.data.currentRoom
       if (!roomId) return
 
       try {
-        // Update room state
-        await prisma.watchRoom.update({
+        // Get or create room sync state with Redis fallback
+        if (!roomStates.has(roomId)) {
+          // Try to load from Redis first
+          const cachedState = await cache.getSyncState(roomId)
+          const defaultState = {
+            position: 0,
+            timestamp: Date.now(),
+            isPlaying: false,
+            playbackRate: 1.0,
+            syncVersion: 0
+          }
+          
+          const initialState = cachedState || defaultState
+          roomStates.set(roomId, initialState)
+          
+          // Save to Redis if it was a new state
+          if (!cachedState) {
+            await cache.setSyncState(roomId, initialState)
+          }
+        }
+        
+        const currentState = roomStates.get(roomId)!
+        const newSyncVersion = ++globalSyncVersion
+        
+        // Check for sync conflicts
+        if (data.syncVersion && data.syncVersion < currentState.syncVersion) {
+          socket.emit('sync-conflict', {
+            message: 'Outdated sync version',
+            currentState,
+            serverTime: Date.now()
+          })
+          return
+        }
+        
+        // Update state
+        currentState.position = data.position
+        currentState.timestamp = Date.now()
+        currentState.isPlaying = true
+        currentState.playbackRate = data.playbackRate || 1.0
+        currentState.syncVersion = newSyncVersion
+
+        // Persist to Redis cache (for real-time access)
+        cache.setSyncState(roomId, currentState).catch(error => 
+          console.error('Failed to cache sync state:', error)
+        )
+
+        // Persist to database (async)
+        prisma.watchRoom.update({
           where: { id: roomId },
           data: {
             isPlaying: true,
             currentPosition: data.position,
             lastSyncAt: new Date()
           }
-        })
+        }).catch(error => console.error('Failed to persist play state:', error))
 
         // Log sync event
-        await prisma.syncEvent.create({
+        prisma.syncEvent.create({
           data: {
             roomId,
             eventType: 'play',
             position: data.position,
             userId: socket.data.userId
           }
-        })
+        }).catch(error => console.error('Failed to log sync event:', error))
 
-        // Broadcast to all users in room
-        socket.to(roomId).emit('play', data)
+        // Broadcast enhanced event
+        socket.to(roomId).emit('play', {
+          ...data,
+          syncVersion: newSyncVersion,
+          serverTime: Date.now()
+        })
       } catch (error) {
-        console.error('Error handling play event:', error)
+        console.error('Error handling enhanced play event:', error)
       }
     })
 
-    socket.on('pause', async (data: { position: number; timestamp: number }) => {
+    socket.on('pause', async (data: { 
+      position: number
+      timestamp: number
+      syncVersion?: number 
+    }) => {
       const roomId = socket.data.currentRoom
       if (!roomId) return
 
       try {
-        await prisma.watchRoom.update({
+        const currentState = roomStates.get(roomId)
+        if (!currentState) return
+        
+        const newSyncVersion = ++globalSyncVersion
+        
+        // Check for sync conflicts
+        if (data.syncVersion && data.syncVersion < currentState.syncVersion) {
+          socket.emit('sync-conflict', {
+            message: 'Outdated sync version',
+            currentState,
+            serverTime: Date.now()
+          })
+          return
+        }
+        
+        // Update state
+        currentState.position = data.position
+        currentState.timestamp = Date.now()
+        currentState.isPlaying = false
+        currentState.syncVersion = newSyncVersion
+
+        // Persist to database (async)
+        prisma.watchRoom.update({
           where: { id: roomId },
           data: {
             isPlaying: false,
             currentPosition: data.position,
             lastSyncAt: new Date()
           }
-        })
+        }).catch(error => console.error('Failed to persist pause state:', error))
 
-        await prisma.syncEvent.create({
+        prisma.syncEvent.create({
           data: {
             roomId,
             eventType: 'pause',
             position: data.position,
             userId: socket.data.userId
           }
-        })
+        }).catch(error => console.error('Failed to log sync event:', error))
 
-        socket.to(roomId).emit('pause', data)
+        socket.to(roomId).emit('pause', {
+          ...data,
+          syncVersion: newSyncVersion,
+          serverTime: Date.now()
+        })
       } catch (error) {
-        console.error('Error handling pause event:', error)
+        console.error('Error handling enhanced pause event:', error)
       }
     })
 
-    socket.on('seek', async (data: { position: number; timestamp: number }) => {
+    socket.on('seek', async (data: { 
+      position: number
+      timestamp: number
+      syncVersion?: number 
+    }) => {
       const roomId = socket.data.currentRoom
       if (!roomId) return
 
       try {
-        await prisma.watchRoom.update({
+        const currentState = roomStates.get(roomId)
+        if (!currentState) return
+        
+        const newSyncVersion = ++globalSyncVersion
+        
+        // Check for sync conflicts
+        if (data.syncVersion && data.syncVersion < currentState.syncVersion) {
+          socket.emit('sync-conflict', {
+            message: 'Outdated sync version',
+            currentState,
+            serverTime: Date.now()
+          })
+          return
+        }
+        
+        // Update state
+        currentState.position = data.position
+        currentState.timestamp = Date.now()
+        currentState.syncVersion = newSyncVersion
+
+        // Persist to database (async)
+        prisma.watchRoom.update({
           where: { id: roomId },
           data: {
             currentPosition: data.position,
             lastSyncAt: new Date()
           }
-        })
+        }).catch(error => console.error('Failed to persist seek state:', error))
 
-        await prisma.syncEvent.create({
+        prisma.syncEvent.create({
           data: {
             roomId,
             eventType: 'seek',
             position: data.position,
             userId: socket.data.userId
           }
-        })
+        }).catch(error => console.error('Failed to log sync event:', error))
 
-        socket.to(roomId).emit('seek', data)
+        socket.to(roomId).emit('seek', {
+          ...data,
+          syncVersion: newSyncVersion,
+          serverTime: Date.now()
+        })
       } catch (error) {
-        console.error('Error handling seek event:', error)
+        console.error('Error handling enhanced seek event:', error)
       }
     })
 
@@ -308,34 +484,56 @@ export function initializeSocketIO(server: NetServer): SocketIOServer {
       }
     })
 
-    // Sync request event
-    socket.on('sync-request', async () => {
+    // Enhanced sync request with cached state
+    socket.on('sync-request', async (data: { lastKnownVersion?: number }) => {
       const roomId = socket.data.currentRoom
       if (!roomId) return
 
       try {
-        const room = await prisma.watchRoom.findUnique({
-          where: { id: roomId }
-        })
-
-        if (room) {
+        const roomState = roomStates.get(roomId)
+        
+        if (roomState) {
           socket.emit('sync-response', {
-            position: room.currentPosition,
-            isPlaying: room.isPlaying,
-            timestamp: Date.now()
+            ...roomState,
+            serverTime: Date.now()
           })
+        } else {
+          // Fallback to database if not in cache
+          const room = await prisma.watchRoom.findUnique({
+            where: { id: roomId }
+          })
+
+          if (room) {
+            const fallbackState = {
+              position: room.currentPosition,
+              isPlaying: room.isPlaying,
+              timestamp: Date.now(),
+              playbackRate: 1.0,
+              syncVersion: 0
+            }
+            
+            roomStates.set(roomId, fallbackState)
+            
+            socket.emit('sync-response', {
+              ...fallbackState,
+              serverTime: Date.now()
+            })
+          }
         }
       } catch (error) {
-        console.error('Error handling sync request:', error)
+        console.error('Error handling enhanced sync request:', error)
       }
     })
 
-    // Disconnect event
-    socket.on('disconnect', async () => {
-      console.log(`User ${socket.data.user?.name} disconnected:`, socket.id)
+    // Enhanced disconnect event with cleanup
+    socket.on('disconnect', async (reason) => {
+      console.log(`User ${socket.data.user?.name} disconnected:`, socket.id, 'Reason:', reason)
       
       const roomId = socket.data.currentRoom
       const userId = socket.data.userId
+      
+      // Clean up connection health
+      connectionHealth.delete(socket.id)
 
       if (roomId && userId) {
         try {
@@ -351,16 +549,48 @@ export function initializeSocketIO(server: NetServer): SocketIOServer {
             }
           })
 
-          // Notify other users
+          // Notify other users with enhanced info
           socket.to(roomId).emit('user-left', {
-            userId
+            userId,
+            reason: reason === 'client namespace disconnect' ? 'left' : 'disconnected',
+            timestamp: Date.now()
           })
         } catch (error) {
-          console.error('Error handling disconnect:', error)
+          console.error('Error handling enhanced disconnect:', error)
         }
       }
     })
   })
 
+  // Health monitoring and cleanup intervals
+  setInterval(() => {
+    const now = Date.now()
+    
+    // Check for stale connections
+    for (const [socketId, health] of connectionHealth) {
+      if (now - health.lastPing > 90000) { // 90 seconds without ping
+        const socket = io.sockets.sockets.get(socketId)
+        if (socket) {
+          console.log(`Disconnecting stale connection: ${socketId}`)
+          socket.disconnect(true)
+        }
+        connectionHealth.delete(socketId)
+      }
+    }
+    
+    // Clean up empty room states
+    for (const [roomId, state] of roomStates) {
+      if (now - state.timestamp > 3600000) { // 1 hour old
+        const roomSockets = io.sockets.adapter.rooms.get(roomId)
+        if (!roomSockets || roomSockets.size === 0) {
+          roomStates.delete(roomId)
+          console.log(`Cleaned up empty room state: ${roomId}`)
+        }
+      }
+    }
+  }, 30000) // Every 30 seconds
+
+  console.log('🎬 Enhanced Socket.IO server initialized with real-time sync features')
+  
   return io
 }

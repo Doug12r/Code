@@ -66,6 +66,46 @@ export interface PlexPart {
   videoProfile: string
 }
 
+export interface PlexSeason {
+  ratingKey: string
+  key: string
+  type: string
+  title: string
+  summary?: string
+  index: number
+  thumb?: string
+  art?: string
+  leafCount: number
+  viewedLeafCount: number
+  addedAt: number
+  updatedAt: number
+}
+
+export interface PlexEpisode {
+  ratingKey: string
+  key: string
+  type: string
+  title: string
+  summary?: string
+  index: number
+  parentIndex: number
+  year?: number
+  thumb?: string
+  art?: string
+  duration?: number
+  addedAt: number
+  updatedAt: number
+  originallyAvailableAt?: string
+  contentRating?: string
+  rating?: number
+  viewCount?: number
+  grandparentTitle?: string
+  parentTitle?: string
+  Media?: PlexMediaFile[]
+  Director?: Array<{ tag: string }>
+  Writer?: Array<{ tag: string }>
+}
+
 interface RequestConfig {
   timeout: number;
   retries: number;
@@ -424,7 +464,7 @@ export class PlexAPI {
   // Get user's Plex servers
   async getServers(): Promise<PlexServer[]> {
     const data = await this.makeRequest<{ Server: PlexServer[] }>('/')
-    return data.Server || []
+    return (data as any).Server || []
   }
 
     // Get all libraries with consistent handling
@@ -609,6 +649,119 @@ export class PlexAPI {
       ...health,
       healthScore: Math.round(healthScore),
       status
+    }
+  }
+
+  /**
+   * Get seasons for a TV show
+   */
+  async getShowSeasons(showRatingKey: string): Promise<PlexSeason[]> {
+    try {
+      const result = await this.makeRequest<any>(`/library/metadata/${showRatingKey}/children`)
+      
+      if (!result.data?.Metadata) {
+        return []
+      }
+      
+      return result.data.Metadata.map((season: any) => ({
+        ratingKey: season.ratingKey,
+        key: season.key,
+        type: season.type,
+        title: season.title,
+        summary: season.summary,
+        index: season.index,
+        thumb: season.thumb,
+        art: season.art,
+        leafCount: season.leafCount,
+        viewedLeafCount: season.viewedLeafCount,
+        addedAt: season.addedAt,
+        updatedAt: season.updatedAt
+      }))
+    } catch (error) {
+      console.error('Error fetching TV show seasons:', error)
+      throw error
+    }
+  }
+
+  /**
+   * Get episodes for a season
+   */
+  async getSeasonEpisodes(seasonRatingKey: string): Promise<PlexEpisode[]> {
+    try {
+      const result = await this.makeRequest<any>(`/library/metadata/${seasonRatingKey}/children`)
+      
+      if (!result.data?.Metadata) {
+        return []
+      }
+      
+      return result.data.Metadata.map((episode: any) => ({
+        ratingKey: episode.ratingKey,
+        key: episode.key,
+        type: episode.type,
+        title: episode.title,
+        summary: episode.summary,
+        index: episode.index,
+        parentIndex: episode.parentIndex,
+        year: episode.year,
+        thumb: episode.thumb,
+        art: episode.art,
+        duration: episode.duration,
+        addedAt: episode.addedAt,
+        updatedAt: episode.updatedAt,
+        originallyAvailableAt: episode.originallyAvailableAt,
+        contentRating: episode.contentRating,
+        rating: episode.rating,
+        viewCount: episode.viewCount,
+        grandparentTitle: episode.grandparentTitle,
+        parentTitle: episode.parentTitle,
+        Media: episode.Media,
+        Director: episode.Director,
+        Writer: episode.Writer
+      }))
+    } catch (error) {
+      console.error('Error fetching season episodes:', error)
+      throw error
+    }
+  }
+
+  /**
+   * Get all episodes for a TV show (across all seasons)
+   */
+  async getShowEpisodes(showRatingKey: string): Promise<PlexEpisode[]> {
+    try {
+      const result = await this.makeRequest<any>(`/library/metadata/${showRatingKey}/allLeaves`)
+      
+      if (!result.data?.Metadata) {
+        return []
+      }
+      
+      return result.data.Metadata.map((episode: any) => ({
+        ratingKey: episode.ratingKey,
+        key: episode.key,
+        type: episode.type,
+        title: episode.title,
+        summary: episode.summary,
+        index: episode.index,
+        parentIndex: episode.parentIndex,
+        year: episode.year,
+        thumb: episode.thumb,
+        art: episode.art,
+        duration: episode.duration,
+        addedAt: episode.addedAt,
+        updatedAt: episode.updatedAt,
+        originallyAvailableAt: episode.originallyAvailableAt,
+        contentRating: episode.contentRating,
+        rating: episode.rating,
+        viewCount: episode.viewCount,
+        grandparentTitle: episode.grandparentTitle,
+        parentTitle: episode.parentTitle,
+        Media: episode.Media,
+        Director: episode.Director,
+        Writer: episode.Writer
+      }))
+    } catch (error) {
+      console.error('Error fetching show episodes:', error)
+      throw error
     }
   }
 }

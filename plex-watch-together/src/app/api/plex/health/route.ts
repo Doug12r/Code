@@ -1,82 +1,173 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { PlexAPI } from '@/lib/plex-api'
+import { getPlexService } from '@/lib/plex-service'
+import { getServerSession } from 'next-auth'
+import { authOptions } from '@/lib/auth-production'
+
+/**
+ * Enhanced Plex Health API Endpoint
+ * Provides comprehensive health monitoring and diagnostics
+ */
 
 export async function GET(request: NextRequest) {
   try {
-    // Get Plex credentials from environment or session
-    const baseUrl = process.env.PLEX_SERVER_URL || 'https://douglinux.duckdns.org:443'
-    const token = process.env.PLEX_TOKEN || 'NejSfzx7UZpYVxqaPdAq'
-    
-    if (!token) {
-      return NextResponse.json({ error: 'Plex token not found' }, { status: 400 })
+    // Check authentication
+    const session = await getServerSession(authOptions)
+    if (!session) {
+      return NextResponse.json(
+        { error: 'Authentication required' },
+        { status: 401 }
+      )
     }
 
-    const plexAPI = new PlexAPI(baseUrl, token)
-    
-    // Get current connection health without making a new request
-    const health = plexAPI.getConnectionHealth()
-    
-    // Perform a quick health check
-    const diagnostics = await plexAPI.testConnectionWithDiagnostics()
+    const { searchParams } = new URL(request.url)
+    const detailed = searchParams.get('detailed') === 'true'
+    const diagnostics = searchParams.get('diagnostics') === 'true'
+
+    const plexService = getPlexService()
+
+    if (diagnostics) {
+      // Run comprehensive diagnostics
+      const diagnosticResults = await plexService.performDiagnostics()
+      
+      return NextResponse.json({
+        status: 'diagnostics_complete',
+        timestamp: new Date().toISOString(),
+        diagnostics: diagnosticResults,
+        metrics: plexService.getMetrics()
+      })
+    }
+
+    if (detailed) {
+      // Return detailed health and performance metrics
+      const health = plexService.getConnectionHealth()
+      const metrics = plexService.getMetrics()
+      
+      return NextResponse.json({
+        status: health.status,
+        timestamp: new Date().toISOString(),
+        health,
+        metrics,
+        performance: {
+          cacheEfficiency: `${metrics.cacheHitRate}%`,
+          avgResponseTime: `${Math.round(metrics.averageResponseTime)}ms`,
+          successRate: `${metrics.successRate}%`,
+          uptime: formatDuration(metrics.uptime)
+        }
+      })
+    }
+
+    // Basic health check
+    const health = plexService.getConnectionHealth()
     
     return NextResponse.json({
-      connectionHealth: health,
-      lastTest: {
-        success: diagnostics.success,
-        latency: diagnostics.latency,
-        attempt: diagnostics.attempt,
-        error: diagnostics.error
-      },
-      recommendations: generateRecommendations(health),
-      timestamp: new Date().toISOString()
+      status: health.status,
+      timestamp: new Date().toISOString(),
+      healthy: health.isHealthy,
+      latency: health.latency,
+      lastCheck: new Date(health.lastCheck).toISOString()
     })
+
+  } catch (error: any) {
+    console.error('Plex health check failed:', error)
     
-  } catch (error) {
-    console.error('Health check failed:', error)
-    return NextResponse.json(
-      { error: 'Health check failed' },
-      { status: 500 }
-    )
+    return NextResponse.json({
+      status: 'error',
+      timestamp: new Date().toISOString(),
+      healthy: false,
+      error: error.message || 'Health check failed'
+    }, { status: 500 })
   }
 }
 
-function generateRecommendations(health: any): string[] {
-  const recommendations: string[] = []
-  
-  if (health.consecutiveFailures >= 3) {
-    recommendations.push('High failure rate detected - check network stability')
-    recommendations.push('Consider restarting your router or checking ISP status')
-  }
-  
-  if (health.averageLatency > 5000) {
-    recommendations.push('High latency detected - network may be congested')
-    recommendations.push('Try using the app during off-peak hours')
-  }
-  
-  if (health.healthScore < 60) {
-    recommendations.push('Network connection is unstable')
-    recommendations.push('Auto-retry logic is compensating for network issues')
-  }
-  
-  if (health.successCount > 0 && health.consecutiveFailures === 0) {
-    recommendations.push('Connection is stable - all systems working normally')
-  }
-  
-  return recommendations
-}
-
+/**
+ * Handle Plex service actions
+ */
 export async function POST(request: NextRequest) {
   try {
-    const { action } = await request.json()
-    
-    if (action === 'reset') {
-      // This would reset health metrics if we exposed that functionality
-      return NextResponse.json({ message: 'Health metrics reset' })
+    const session = await getServerSession(authOptions)
+    if (!session) {
+      return NextResponse.json(
+        { error: 'Authentication required' },
+        { status: 401 }
+      )
     }
+
+    const { action } = await request.json()
+    const plexService = getPlexService()
+
+    switch (action) {
+      case 'preload':
+        const startTime = Date.now()
+        await plexService.preloadCommonData()
+        const loadTime = Date.now() - startTime
+        const metrics = plexService.getMetrics()
+
+        return NextResponse.json({
+          status: 'preload_complete',
+          timestamp: new Date().toISOString(),
+          loadTime: `${loadTime}ms`,
+          cacheStatus: {
+            entries: metrics.cacheSize,
+            hitRate: `${metrics.cacheHitRate}%`
+          }
+        })
+
+      case 'clear_cache':
+        const metricsBefore = plexService.getMetrics()
+        plexService.clearCache()
+        const metricsAfter = plexService.getMetrics()
+
+        return NextResponse.json({
+          status: 'cache_cleared',
+          timestamp: new Date().toISOString(),
+          cleared: {
+            cacheEntries: metricsBefore.cacheSize,
+            activeRequests: metricsBefore.activeRequests
+          },
+          current: {
+            cacheEntries: metricsAfter.cacheSize,
+            activeRequests: metricsAfter.activeRequests
+          }
+        })
+
+      case 'diagnostics':
+        const diagnosticResults = await plexService.performDiagnostics()
+        
+        return NextResponse.json({
+          status: 'diagnostics_complete',
+          timestamp: new Date().toISOString(),
+          diagnostics: diagnosticResults,
+          metrics: plexService.getMetrics()
+        })
+
+      default:
+        return NextResponse.json(
+          { error: 'Invalid action. Supported actions: preload, clear_cache, diagnostics' },
+          { status: 400 }
+        )
+    }
+
+  } catch (error: any) {
+    console.error('Plex service action failed:', error)
     
-    return NextResponse.json({ error: 'Invalid action' }, { status: 400 })
-    
-  } catch (error) {
-    return NextResponse.json({ error: 'Invalid request' }, { status: 400 })
+    return NextResponse.json({
+      status: 'error',
+      error: error.message || 'Action failed'
+    }, { status: 500 })
   }
+}
+
+/**
+ * Format duration in human-readable format
+ */
+function formatDuration(ms: number): string {
+  const seconds = Math.floor(ms / 1000)
+  const minutes = Math.floor(seconds / 60)
+  const hours = Math.floor(minutes / 60)
+  const days = Math.floor(hours / 24)
+
+  if (days > 0) return `${days}d ${hours % 24}h`
+  if (hours > 0) return `${hours}h ${minutes % 60}m`
+  if (minutes > 0) return `${minutes}m ${seconds % 60}s`
+  return `${seconds}s`
 }

@@ -12,7 +12,7 @@ datasource db {
   relationMode = "prisma"
 }
 
-// User management with NextAuth.js integration
+// User management with NextAuth.js integration and enhanced performance
 model User {
   id            String    @id @default(cuid())
   email         String    @unique
@@ -28,6 +28,10 @@ model User {
   plexToken     String?   // Encrypted Plex authentication token
   plexServerId  String?   // User's primary Plex server
   plexUrl       String?   // Plex server URL
+  
+  // Performance tracking
+  lastActiveAt  DateTime  @default(now()) @db.Timestamp(6)
+  sessionCount  Int       @default(0) @db.Integer
 
   // Relationships
   accounts      Account[]
@@ -35,7 +39,14 @@ model User {
   createdRooms  WatchRoom[] @relation("RoomCreator")
   roomMembers   RoomMember[]
   messages      ChatMessage[]
+  syncEvents    SyncEvent[]
 
+  // Enhanced indexes for performance
+  @@index([email])
+  @@index([plexUsername])
+  @@index([plexServerId])
+  @@index([lastActiveAt])
+  @@index([createdAt])
   @@map("users")
 }
 
@@ -160,24 +171,42 @@ model ChatMessage {
   @@map("chat_messages")
 }
 
-// Synchronization events for debugging and analytics
+// Enhanced synchronization events for debugging and analytics
 model SyncEvent {
   id        String   @id @default(cuid())
-  eventType String   @db.VarChar(20) // play, pause, seek, buffer
+  eventType String   @db.VarChar(20) // play, pause, seek, buffer, sync_request
   timestamp DateTime @default(now()) @db.Timestamp(6)
   position  Float    @db.DoublePrecision // Position at time of event
-  userId    String
+  
+  // Enhanced sync data for performance analysis
+  syncVersion    Int      @default(0) @db.Integer
+  latency        Int?     @db.Integer // Network latency when event occurred
+  buffering      Boolean  @default(false)
+  playbackRate   Float    @default(1.0) @db.DoublePrecision
+  
+  // Client information for analytics
+  clientId       String?  @db.VarChar(50) // Socket ID or client identifier
+  userAgent      String?  @db.VarChar(500) // For analytics
+  
+  // Performance metrics
+  processedAt    DateTime? @db.Timestamp(6)
+  processingTime Int?     @db.Integer // Time to process in ms
 
   // Relationships
+  userId String
   roomId String
+  user   User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   room   WatchRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
 
+  // Enhanced indexes for analytics and performance
   @@index([roomId, timestamp])
-  @@index([userId])
+  @@index([userId, timestamp])
+  @@index([eventType])
+  @@index([timestamp])
+  @@index([syncVersion])
+  @@index([latency])
   @@map("sync_events")
-}
-
-// Verification tokens for NextAuth.js
+}// Verification tokens for NextAuth.js
 model VerificationToken {
   identifier String
   token      String   @unique
@@ -187,7 +216,7 @@ model VerificationToken {
   @@map("verification_tokens")
 }
 
-// Performance monitoring table
+// Enhanced performance monitoring and metrics
 model PerformanceLog {
   id            String   @id @default(cuid())
   endpoint      String   @db.VarChar(100)
@@ -202,9 +231,83 @@ model PerformanceLog {
   // Error details
   errorType     String?  @db.VarChar(50)
   errorMessage  String?  @db.Text
-
+  
+  // Additional performance context
+  memoryUsage   Float?   @db.DoublePrecision // Memory usage at time of request
+  cpuUsage      Float?   @db.DoublePrecision // CPU usage percentage
+  cacheHit      Boolean? // Whether request was served from cache
+  
   @@index([endpoint, timestamp])
   @@index([userId, timestamp])
   @@index([statusCode, timestamp])
+  @@index([responseTime])
+  @@index([cacheHit])
   @@map("performance_logs")
+}
+
+// Room invites with expiration and usage tracking
+model RoomInvite {
+  id         String   @id @default(cuid())
+  code       String   @unique @default(cuid()) @db.VarChar(30)
+  createdAt  DateTime @default(now()) @db.Timestamp(6)
+  expiresAt  DateTime @db.Timestamp(6)
+  usedAt     DateTime? @db.Timestamp(6)
+  maxUses    Int      @default(1) @db.SmallInt
+  usedCount  Int      @default(0) @db.SmallInt
+  isActive   Boolean  @default(true)
+
+  // Relationships
+  roomId    String
+  createdBy String
+  room      WatchRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@index([code])
+  @@index([roomId])
+  @@index([expiresAt])
+  @@index([isActive])
+  @@map("room_invites")
+}
+
+// Cache management and performance tracking
+model CacheMetric {
+  id         String   @id @default(cuid())
+  cacheKey   String   @db.VarChar(200)
+  cacheType  String   @db.VarChar(50) // Type of cached data
+  operation  String   @db.VarChar(20) // get, set, delete, hit, miss
+  timestamp  DateTime @default(now()) @db.Timestamp(6)
+  hitCount   Int      @default(0) @db.Integer
+  lastHitAt  DateTime? @db.Timestamp(6)
+  dataSize   Int?     @db.Integer // Size in bytes
+  ttl        Int?     @db.Integer // TTL in seconds
+  
+  @@index([cacheKey])
+  @@index([cacheType])
+  @@index([operation])
+  @@index([timestamp])
+  @@index([lastHitAt])
+  @@map("cache_metrics")
+}
+
+// Database query performance tracking
+model QueryMetric {
+  id            String   @id @default(cuid())
+  queryName     String   @db.VarChar(100) // Named query identifier
+  model         String   @db.VarChar(50)  // Prisma model name
+  operation     String   @db.VarChar(30)  // findMany, create, update, etc.
+  duration      Int      @db.Integer      // Query duration in ms
+  timestamp     DateTime @default(now()) @db.Timestamp(6)
+  success       Boolean  @default(true)
+  errorType     String?  @db.VarChar(50)
+  recordCount   Int?     @db.Integer      // Number of records affected
+  
+  // Query context
+  userId        String?
+  roomId        String?
+  
+  @@index([queryName])
+  @@index([model, operation])
+  @@index([duration])
+  @@index([timestamp])
+  @@index([success])
+  @@map("query_metrics")
 }

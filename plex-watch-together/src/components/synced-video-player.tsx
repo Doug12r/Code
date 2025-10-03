@@ -22,7 +22,8 @@ import {
   WifiOffIcon,
   RefreshCwIcon as SyncIcon,
   SettingsIcon,
-  MaximizeIcon
+  MaximizeIcon,
+  ClosedCaptionIcon
 } from 'lucide-react'
 
 interface SyncedVideoPlayerProps {
@@ -75,6 +76,7 @@ export function SyncedVideoPlayer({
   const [volume, setVolume] = useState(0.8)
   const [isMuted, setIsMuted] = useState(false)
   const [isFullscreen, setIsFullscreen] = useState(false)
+  const [subtitlesEnabled, setSubtitlesEnabled] = useState(false)
   
   // Room and sync state
   const [members, setMembers] = useState<RoomMember[]>([])
@@ -316,6 +318,21 @@ export function SyncedVideoPlayer({
     }
   }
 
+  const toggleSubtitles = () => {
+    setSubtitlesEnabled(prev => {
+      const newValue = !prev
+      // Toggle the text tracks on the video element
+      if (videoRef.current) {
+        const tracks = videoRef.current.textTracks
+        for (let i = 0; i < tracks.length; i++) {
+          tracks[i].mode = newValue ? 'showing' : 'hidden'
+        }
+      }
+      toast.success(`Subtitles ${newValue ? 'enabled' : 'disabled'}`)
+      return newValue
+    })
+  }
+
   if (!mediaUrl) {
     return (
       <Card className="w-full max-w-4xl mx-auto">
@@ -391,7 +408,23 @@ export function SyncedVideoPlayer({
                 onWaiting={handleWaiting}
                 onCanPlay={handleCanPlay}
                 onEnded={() => setIsPlaying(false)}
-              />
+                crossOrigin="anonymous"
+              >
+                {/* Subtitle tracks - these would come from Plex in a real implementation */}
+                <track
+                  kind="subtitles"
+                  src="/api/subtitles/english.vtt"
+                  srcLang="en"
+                  label="English"
+                  default={subtitlesEnabled}
+                />
+                <track
+                  kind="subtitles"
+                  src="/api/subtitles/spanish.vtt"
+                  srcLang="es"
+                  label="Spanish"
+                />
+              </video>
               
               {/* Loading Overlay */}
               {isBuffering && (
@@ -470,14 +503,25 @@ export function SyncedVideoPlayer({
                     </div>
                   </div>
 
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={toggleFullscreen}
-                    className="text-white hover:bg-white/20"
-                  >
-                    <MaximizeIcon className="h-4 w-4" />
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={toggleSubtitles}
+                      className={`text-white hover:bg-white/20 ${subtitlesEnabled ? 'bg-white/20' : ''}`}
+                    >
+                      <ClosedCaptionIcon className="h-4 w-4" />
+                    </Button>
+
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={toggleFullscreen}
+                      className="text-white hover:bg-white/20"
+                    >
+                      <MaximizeIcon className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </div>
               </div>
             </div>

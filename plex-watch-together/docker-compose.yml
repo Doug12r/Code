@@ -1,22 +1,40 @@
 version: '3.8'
 
 services:
-  # Main application
+  # Main Application
   app:
-    build: .
+    build:
+      context: .
+      target: runner
     ports:
-      - "3000:3000"
+      - "${PORT:-3000}:3000"
     environment:
       - NODE_ENV=production
-      - DATABASE_URL=postgresql://postgres:password@postgres:5432/plex_watch_together
+      - DATABASE_URL=postgresql://plexuser:${POSTGRES_PASSWORD:-plexsecure}@postgres:5432/plexwatchtogether
       - REDIS_URL=redis://redis:6379
-      - NEXTAUTH_SECRET=your-super-secret-jwt-key-change-in-production
-      - NEXTAUTH_URL=http://localhost:3000
-      - ENCRYPTION_KEY=your-encryption-key-change-in-production
+    env_file:
+      - .env.local
+    volumes:
+      # Mount for SQLite database (if using SQLite instead of PostgreSQL)
+      - app_data:/app/data
+      # Mount for transcoded video cache
+      - transcode_cache:/app/cache
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     restart: unless-stopped
+    networks:
+      - plex-network
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
       interval: 30s
@@ -24,59 +42,143 @@ services:
       retries: 3
       start_period: 40s
 
-  # PostgreSQL database
+  # PostgreSQL Database
   postgres:
     image: postgres:15-alpine
     environment:
-      - POSTGRES_DB=plex_watch_together
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=password
+      - POSTGRES_USER=plexuser
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-plexsecure}
+      - POSTGRES_DB=plexwatchtogether
+      - POSTGRES_INITDB_ARGS="--auth-host=md5"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     restart: unless-stopped
+    networks:
+      - plex-network
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 10s
-      timeout: 5s
+      test: ["CMD-SHELL", "pg_isready -U plexuser -d plexwatchtogether"]
+      interval: 30s
+      timeout: 10s
       retries: 5
+      start_period: 30s
 
-  # Redis cache
+  # Redis for Caching and Session Management
   redis:
     image: redis:7-alpine
     command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
     volumes:
       - redis_data:/data
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-6379}:6379"
     restart: unless-stopped
+    networks:
+      - plex-network
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.25'
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 3s
+      interval: 30s
+      timeout: 10s
       retries: 3
 
-  # Nginx reverse proxy (optional)
+  # Nginx Reverse Proxy (Optional - for production SSL termination)
   nginx:
     image: nginx:alpine
     ports:
-      - "80:80"
-      - "443:443"
+      - "${NGINX_HTTP_PORT:-80}:80"
+      - "${NGINX_HTTPS_PORT:-443}:443"
     volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./ssl:/etc/nginx/ssl:ro
+      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./docker/nginx/ssl:/etc/nginx/ssl:ro
     depends_on:
       - app
     restart: unless-stopped
+    networks:
+      - plex-network
     profiles:
       - production
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: '0.25'
+
+  # Prometheus for Monitoring (Optional)
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+    restart: unless-stopped
+    networks:
+      - plex-network
+    profiles:
+      - monitoring
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.25'
+
+  # Grafana for Dashboards (Optional)
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "${GRAFANA_PORT:-3001}:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./docker/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./docker/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+    networks:
+      - plex-network
+    profiles:
+      - monitoring
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.25'
 
 volumes:
   postgres_data:
+    driver: local
   redis_data:
+    driver: local
+  app_data:
+    driver: local
+  transcode_cache:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
 
 networks:
-  default:
-    name: plex-watch-together
+  plex-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

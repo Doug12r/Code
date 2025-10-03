@@ -3,10 +3,11 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { PlexAPI } from '@/lib/plex-api'
+import { encryptToken, decryptToken } from '@/lib/encryption'
 import { z } from 'zod'
 
 const setupPlexSchema = z.object({
-  serverUrl: z.string().url('Invalid server URL'),
+  serverUrl: z.string().min(1, 'Server URL is required'),
   claimToken: z.string().optional(),
   manualToken: z.string().optional(),
 }).refine(data => data.claimToken || data.manualToken, {
@@ -23,8 +24,16 @@ export async function POST(request: NextRequest) {
     const body = await request.json()
     const { serverUrl, claimToken, manualToken } = setupPlexSchema.parse(body)
 
+      // Handle auto-discovery
+      let baseUrl = serverUrl
+      if (serverUrl.toLowerCase() === 'auto') {
+        // For auto-discovery, we'll start with localhost but the URL testing logic
+        // below will try many variations including network discovery
+        baseUrl = 'localhost:32400'
+      }
+
       // Clean up the server URL
-      const cleanServerUrl = serverUrl.replace(/\/$/, '')
+      const cleanServerUrl = baseUrl.replace(/\/$/, '')
 
       let plexToken: string
       let plexUser: any
@@ -47,23 +56,49 @@ export async function POST(request: NextRequest) {
         
         // Test connection to the server - comprehensive Plex server URL variations
         const hostname = cleanServerUrl.replace(/^https?:\/\//, '').replace(/:\d+$/, '')
-        const serverUrlsToTry = [
-          // Standard Plex configurations
-          `https://${hostname}:32400`,
-          `http://${hostname}:32400`, 
-          cleanServerUrl, // User's original URL
-          `https://${hostname}:443`,
-          `http://${hostname}:80`,
-          `https://${hostname}`,
-          `http://${hostname}`,
-          // DuckDNS specific fallbacks
-          ...(hostname.includes('duckdns.org') ? [
-            `https://${hostname}:8920`, // Alternative Plex port
-            `http://${hostname}:8920`,
-            `https://${hostname}:9090`, // Another common port
-            `http://${hostname}:9090`
-          ] : [])
-        ].filter((url, index, arr) => arr.indexOf(url) === index) // Remove duplicates
+        let serverUrlsToTry: string[] = []
+
+        if (serverUrl.toLowerCase() === 'auto') {
+          // Auto-discovery: try common Plex server locations
+          serverUrlsToTry = [
+            // Local server locations
+            'http://localhost:32400',
+            'http://127.0.0.1:32400',
+            'https://localhost:32400',
+            'https://127.0.0.1:32400',
+            // Network discovery - try common local network ranges
+            'http://192.168.1.100:32400',
+            'http://192.168.1.50:32400',
+            'http://192.168.1.10:32400',
+            'http://192.168.0.100:32400',
+            'http://192.168.0.50:32400',
+            'http://192.168.0.10:32400',
+            // Docker common locations
+            'http://plex:32400',
+            'http://plexmediaserver:32400'
+          ]
+        } else {
+          // Standard URL variations for user-provided URL
+          serverUrlsToTry = [
+            // Standard Plex configurations
+            `https://${hostname}:32400`,
+            `http://${hostname}:32400`, 
+            cleanServerUrl, // User's original URL
+            `https://${hostname}:443`,
+            `http://${hostname}:80`,
+            `https://${hostname}`,
+            `http://${hostname}`,
+            // DuckDNS specific fallbacks
+            ...(hostname.includes('duckdns.org') ? [
+              `https://${hostname}:8920`, // Alternative Plex port
+              `http://${hostname}:8920`,
+              `https://${hostname}:9090`, // Another common port
+              `http://${hostname}:9090`
+            ] : [])
+          ]
+        }
+        
+        serverUrlsToTry = serverUrlsToTry.filter((url, index, arr) => arr.indexOf(url) === index) // Remove duplicates
         
         let workingApi: PlexAPI | null = null
         let workingUrl = ''
@@ -183,8 +218,8 @@ export async function POST(request: NextRequest) {
         // This is ok - we can still store the connection for later use
       }
 
-      // Encrypt the Plex token before storing (in production, use proper encryption)
-      const encryptedToken = Buffer.from(plexToken).toString('base64')
+      // Encrypt the Plex token using proper AES-GCM encryption
+      const encryptedToken = encryptToken(plexToken)
 
       // Update user with Plex credentials
       await prisma.user.update({
@@ -272,7 +307,30 @@ export async function GET(request: NextRequest) {
     }
 
     // Decrypt the token
-    const plexToken = Buffer.from(user.plexToken, 'base64').toString()
+    let plexToken: string
+    try {
+      plexToken = decryptToken(user.plexToken)
+    } catch (decryptError) {
+      console.log('🔧 Token decryption failed - clearing for re-authentication')
+      
+      // Clear the invalid token
+      await prisma.user.update({
+        where: { email: session.user.email! },
+        data: { 
+          plexToken: null,
+          plexUrl: null,
+          plexUsername: null,
+          plexServerId: null
+        }
+      })
+      
+      return NextResponse.json({
+        connected: false,
+        status: 'needs-setup',
+        message: 'Plex authentication expired. Please reconnect your Plex account.',
+        setupUrl: '/api/plex/setup'
+      })
+    }
 
     // Test connection
     try {

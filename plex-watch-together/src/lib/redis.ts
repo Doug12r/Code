@@ -352,6 +352,49 @@ class EnhancedRedisClient {
     }
   }
 
+  async ltrim(key: string, start: number, stop: number): Promise<boolean> {
+    if (!this.client || !this.isConnected) {
+      return false
+    }
+
+    try {
+      const result = await this.client.ltrim(key, start, stop)
+      return result === 'OK'
+    } catch (error) {
+      console.error('Redis LTRIM error:', error)
+      return false
+    }
+  }
+
+  // Set expiration on existing key
+  async expire(key: string, seconds: number): Promise<boolean> {
+    if (!this.client || !this.isConnected) {
+      return false
+    }
+
+    try {
+      const result = await this.client.expire(key, seconds)
+      return result === 1
+    } catch (error) {
+      console.error('Redis EXPIRE error:', error)
+      return false
+    }
+  }
+
+  // Get keys matching pattern
+  async keys(pattern: string): Promise<string[]> {
+    if (!this.client || !this.isConnected) {
+      return []
+    }
+
+    try {
+      return await this.client.keys(pattern)
+    } catch (error) {
+      console.error('Redis KEYS error:', error)
+      return []
+    }
+  }
+
   // Pub/Sub for real-time features
   async publish(channel: string, message: any): Promise<number> {
     if (!this.client || !this.isConnected) {

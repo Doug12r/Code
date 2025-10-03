@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { Session } from 'next-auth'
+import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -25,7 +26,8 @@ import {
 import { signOut } from 'next-auth/react'
 import { toast } from 'sonner'
 import MediaLibrary from './media-library'
-import { PlexSetupModal } from './plex-setup-modal'
+import { PlexSetupModal } from '@/components/plex-setup-modal'
+import { EnhancedPlexSetup } from '@/components/enhanced-plex-setup'
 import { PlexDiagnostics } from './plex-diagnostics'
 import VideoPlayer from './video-player'
 
@@ -34,6 +36,7 @@ interface DashboardProps {
 }
 
 export function DashboardContent({ session }: DashboardProps) {
+  const router = useRouter()
   const [rooms, setRooms] = useState([])
   const [isLoadingRooms, setIsLoadingRooms] = useState(true)
   const [showCreateRoom, setShowCreateRoom] = useState(false)
@@ -130,6 +133,9 @@ export function DashboardContent({ session }: DashboardProps) {
         setNewRoomName('')
         setShowCreateRoom(false)
         fetchRooms()
+        
+        // Navigate to the created room
+        router.push(`/room/${data.room.id}`)
       } else {
         toast.error(data.error || 'Failed to create room')
       }
@@ -174,6 +180,9 @@ export function DashboardContent({ session }: DashboardProps) {
         setJoinCode('')
         setShowJoinRoom(false)
         fetchRooms() // Refresh room list
+        
+        // Navigate to the joined room
+        router.push(`/room/${data.room.id}`)
       } else {
         toast.error(data.error || 'Failed to join room')
       }
@@ -213,8 +222,8 @@ export function DashboardContent({ session }: DashboardProps) {
 
   const handleJoinRoomById = async (roomId: string) => {
     try {
-      // For now, just redirect to room view - we'll implement this fully later
-      toast.info('Room joining functionality will be implemented with real-time features')
+      // Navigate directly to the room
+      router.push(`/room/${roomId}`)
     } catch (error) {
       toast.error('Failed to join room')
       console.error('Join room by ID error:', error)
@@ -660,11 +669,23 @@ export function DashboardContent({ session }: DashboardProps) {
       </div>
 
       {/* Plex Setup Modal */}
-      <PlexSetupModal
-        isOpen={showPlexSetup}
-        onOpenChange={setShowPlexSetup}
-        onPlexConnected={checkPlexStatus}
-      />
+      {showPlexSetup && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg p-6 w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-2xl font-bold">Plex Connection Manager</h2>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowPlexSetup(false)}
+              >
+                ✕
+              </Button>
+            </div>
+            <EnhancedPlexSetup />
+          </div>
+        </div>
+      )}
     </div>
   )
 }

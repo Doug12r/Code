@@ -8,26 +8,67 @@ const plexApi = new PlexAPI(
   process.env.PLEX_TOKEN || ''
 );
 
-// Track active transcoding sessions
+// Track active transcoding sessions with improved management
 const activeTranscodeSessions = new Map<string, {
   process: any;
   lastAccessed: number;
   cleanup: () => void;
+  startTime: number;
+  resourceUsage: {
+    memoryMB: number;
+    cpuPercent: number;
+  };
 }>();
 
-// Cleanup stale sessions every 5 minutes
-setInterval(() => {
+const MAX_CONCURRENT_SESSIONS = 5; // Limit concurrent transcoding sessions
+const SESSION_TIMEOUT = 3 * 60 * 1000; // 3 minutes (reduced from 5)
+
+// Cleanup stale sessions more frequently and with better logging
+const cleanupInterval = setInterval(() => {
   const now = Date.now();
-  const staleTimeout = 5 * 60 * 1000; // 5 minutes
+  const sessionsToCleanup: string[] = [];
   
   for (const [sessionId, session] of activeTranscodeSessions.entries()) {
-    if (now - session.lastAccessed > staleTimeout) {
-      console.log(`🧹 Cleaning up stale transcoding session: ${sessionId}`);
-      session.cleanup();
-      activeTranscodeSessions.delete(sessionId);
+    if (now - session.lastAccessed > SESSION_TIMEOUT) {
+      sessionsToCleanup.push(sessionId);
     }
   }
-}, 5 * 60 * 1000);
+  
+  if (sessionsToCleanup.length > 0) {
+    console.log(`🧹 Cleaning up ${sessionsToCleanup.length} stale transcoding sessions`);
+    
+    for (const sessionId of sessionsToCleanup) {
+      const session = activeTranscodeSessions.get(sessionId);
+      if (session) {
+        try {
+          session.cleanup();
+        } catch (error) {
+          console.error(`❌ Error cleaning up session ${sessionId}:`, error);
+        }
+        activeTranscodeSessions.delete(sessionId);
+      }
+    }
+    
+    console.log(`📊 Active sessions after cleanup: ${activeTranscodeSessions.size}`);
+  }
+}, 2 * 60 * 1000); // Check every 2 minutes
+
+// Graceful cleanup on process exit
+process.on('beforeExit', () => {
+  if (cleanupInterval) {
+    clearInterval(cleanupInterval);
+  }
+  
+  console.log(`🧹 Cleaning up ${activeTranscodeSessions.size} active transcoding sessions on exit`);
+  for (const [sessionId, session] of activeTranscodeSessions.entries()) {
+    try {
+      session.cleanup();
+    } catch (error) {
+      console.error(`❌ Error during exit cleanup for session ${sessionId}:`, error);
+    }
+  }
+  activeTranscodeSessions.clear();
+});
 
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
@@ -36,6 +77,18 @@ export async function GET(request: NextRequest) {
   
   if (!key) {
     return new Response('Missing key parameter', { status: 400 });
+  }
+
+  // Check concurrent session limits to prevent resource exhaustion
+  if (activeTranscodeSessions.size >= MAX_CONCURRENT_SESSIONS) {
+    console.log(`⚠️ Maximum concurrent sessions (${MAX_CONCURRENT_SESSIONS}) reached. Active: ${activeTranscodeSessions.size}`);
+    return new Response('Server busy. Please try again in a few minutes.', { 
+      status: 503,
+      headers: {
+        'Retry-After': '60',
+        'Content-Type': 'text/plain'
+      }
+    });
   }
 
   // Extract rating key from full path like "/library/metadata/19" -> "19"
@@ -174,11 +227,16 @@ export async function GET(request: NextRequest) {
             }
           };
 
-          // Track this session
+          // Track this session with enhanced monitoring
           activeTranscodeSessions.set(`${ratingKey}-${sessionId}`, {
             process: transcodeProcess,
             lastAccessed: Date.now(),
-            cleanup
+            startTime: Date.now(),
+            cleanup,
+            resourceUsage: {
+              memoryMB: 0,
+              cpuPercent: 0
+            }
           });
 
           transcodeProcess.stdout!.on('data', (chunk: any) => {

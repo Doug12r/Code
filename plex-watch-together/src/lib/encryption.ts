@@ -25,18 +25,18 @@ class EncryptionService {
       const key = this.getEncryptionKey()
       const iv = crypto.randomBytes(this.ivLength)
       
-      const cipher = crypto.createCipher(this.algorithm, key)
+      const cipher = crypto.createCipheriv(this.algorithm, key, iv)
       cipher.setAAD(Buffer.from('plex-watch-together', 'utf8'))
       
-      let encrypted = cipher.update(plaintext, 'utf8', 'base64')
-      encrypted += cipher.final('base64')
+      let encrypted = cipher.update(plaintext, 'utf8')
+      encrypted = Buffer.concat([encrypted, cipher.final()])
       
       const tag = cipher.getAuthTag()
       
       // Combine IV + encrypted data + auth tag
       const result = Buffer.concat([
         iv,
-        Buffer.from(encrypted, 'base64'),
+        encrypted,
         tag
       ]).toString('base64')
       
@@ -60,14 +60,14 @@ class EncryptionService {
       const tag = buffer.subarray(buffer.length - this.tagLength)
       const encrypted = buffer.subarray(this.ivLength, buffer.length - this.tagLength)
       
-      const decipher = crypto.createDecipher(this.algorithm, key)
+      const decipher = crypto.createDecipheriv(this.algorithm, key, iv)
       decipher.setAAD(Buffer.from('plex-watch-together', 'utf8'))
       decipher.setAuthTag(tag)
       
-      let decrypted = decipher.update(encrypted, undefined, 'utf8')
-      decrypted += decipher.final('utf8')
+      let decrypted = decipher.update(encrypted)
+      decrypted = Buffer.concat([decrypted, decipher.final()])
       
-      return decrypted
+      return decrypted.toString('utf8')
     } catch (error) {
       console.error('Decryption failed:', error)
       throw new Error('Failed to decrypt data')
@@ -111,6 +111,39 @@ class EncryptionService {
     
     return result
   }
+
+  /**
+   * Generate session tokens with expiration
+   */
+  generateSessionToken(): { token: string; expires: Date } {
+    const token = this.generateSecureToken(64)
+    const expires = new Date(Date.now() + 24 * 60 * 60 * 1000) // 24 hours
+    return { token, expires }
+  }
+
+  /**
+   * Generate JWT secret for enhanced security
+   */
+  generateJWTSecret(): string {
+    const secret = process.env.NEXTAUTH_SECRET || this.generateSecureToken(64)
+    if (!process.env.NEXTAUTH_SECRET) {
+      console.warn('⚠️ NEXTAUTH_SECRET not set, using generated secret (not recommended for production)')
+    }
+    return secret
+  }
+
+  /**
+   * Validate token format and structure
+   */
+  validateToken(token: string): boolean {
+    try {
+      // Basic validation: token should be hex string of appropriate length
+      const hexRegex = /^[a-f0-9]+$/i
+      return token.length >= 32 && hexRegex.test(token)
+    } catch {
+      return false
+    }
+  }
 }
 
 // Singleton instance
@@ -123,4 +156,13 @@ export function encryptToken(token: string): string {
 
 export function decryptToken(encryptedToken: string): string {
   return encryptionService.decrypt(encryptedToken)
+}
+
+// Enhanced security utilities
+export function generateApiKey(): string {
+  return encryptionService.generateSecureToken(48)
+}
+
+export function generateBypassToken(): string {
+  return `bypass_${encryptionService.generateSecureToken(32)}`
 }

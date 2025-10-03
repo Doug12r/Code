@@ -13,8 +13,8 @@ datasource db {
 // User management with NextAuth.js integration
 model User {
   id            String    @id @default(cuid())
-  email         String    @unique
   name          String?
+  email         String    @unique
   password      String?   // Hashed password for credentials auth
   image         String?
   emailVerified DateTime?
@@ -26,6 +26,10 @@ model User {
   plexToken     String?   // Encrypted Plex authentication token
   plexServerId  String?   // User's primary Plex server
   plexUrl       String?   // Plex server URL
+  
+  // Performance tracking
+  lastActiveAt  DateTime  @default(now())
+  sessionCount  Int       @default(0)
 
   // Relationships
   accounts      Account[]
@@ -33,7 +37,14 @@ model User {
   createdRooms  WatchRoom[] @relation("RoomCreator")
   roomMembers   RoomMember[]
   messages      ChatMessage[]
+  syncEvents    SyncEvent[]
 
+  // Enhanced indexes for performance
+  @@index([email])
+  @@index([plexUsername])
+  @@index([plexServerId])
+  @@index([lastActiveAt])
+  @@index([createdAt])
   @@map("users")
 }
 
@@ -55,6 +66,7 @@ model Account {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([provider, providerAccountId])
+  @@index([userId])
   @@map("accounts")
 }
 
@@ -104,6 +116,7 @@ model WatchRoom {
   members      RoomMember[]
   messages     ChatMessage[]
   syncEvents   SyncEvent[]
+  invites      RoomInvite[]
 
   @@map("watch_rooms")
 }
@@ -159,6 +172,7 @@ model SyncEvent {
   userId    String   // User who triggered the event
 
   // Relationships
+  user   User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   roomId String
   room   WatchRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
 
@@ -173,4 +187,87 @@ model VerificationToken {
 
   @@unique([identifier, token])
   @@map("verification_tokens")
+}
+
+// Performance monitoring
+model PerformanceLog {
+  id          String   @id @default(cuid())
+  timestamp   DateTime @default(now())
+  operation   String   // Operation name (e.g., 'plex_search', 'video_sync')
+  duration    Int      // Duration in milliseconds
+  success     Boolean  @default(true)
+  errorMsg    String?  // Error message if failed
+  userId      String?  // User ID if applicable
+  roomId      String?  // Room ID if applicable
+  metadata    Json?    // Additional performance data
+  
+  // Performance analysis fields
+  cpuUsage    Float?   // CPU usage percentage
+  memoryUsage Float?   // Memory usage in MB
+  cacheHit    Boolean? // Whether cache was hit
+  queryCount  Int?     // Number of DB queries made
+  
+  // Indexes for performance analysis
+  @@index([operation, timestamp])
+  @@index([success, timestamp])
+  @@index([userId, timestamp])
+  @@index([roomId, timestamp])
+  @@map("performance_logs")
+}
+
+// Room invitations system
+model RoomInvite {
+  id        String   @id @default(cuid())
+  code      String   @unique // Short invite code
+  roomId    String
+  createdBy String   // User ID who created invite
+  expiresAt DateTime
+  maxUses   Int?     // Maximum number of uses (null = unlimited)
+  usedCount Int      @default(0)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  
+  // Metadata
+  inviteType String @default("public") // public, private, one-time
+  
+  // Relationships
+  room      WatchRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  
+  @@index([code])
+  @@index([roomId])
+  @@index([expiresAt])
+  @@map("room_invites")
+}
+
+// Cache performance metrics
+model CacheMetric {
+  id        String   @id @default(cuid())
+  timestamp DateTime @default(now())
+  cacheType String   // redis, memory, database
+  operation String   // get, set, delete, invalidate
+  keyPattern String? // Pattern of cache key
+  hitRate   Float?   // Cache hit rate percentage
+  avgLatency Float?  // Average latency in ms
+  errorRate Float?   // Error rate percentage
+  dataSize  Int?     // Size of cached data in bytes
+  
+  @@index([cacheType, operation])
+  @@index([timestamp])
+  @@map("cache_metrics")
+}
+
+// Database query performance metrics
+model QueryMetric {
+  id        String   @id @default(cuid())
+  timestamp DateTime @default(now())
+  model     String   // Prisma model name
+  operation String   // create, update, delete, findMany, etc.
+  duration  Float    // Query duration in ms
+  success   Boolean  @default(true)
+  errorMsg  String?  // Error message if failed
+  
+  @@index([model, operation])
+  @@index([timestamp])
+  @@index([success])
+  @@map("query_metrics")
 }

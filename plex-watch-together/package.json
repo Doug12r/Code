@@ -3,9 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --turbopack",
-    "build": "next build --turbopack",
-    "start": "next start",
+    "dev": "node server.js",
+    "dev:next": "next dev --turbopack",
+    "build": "next build --turbopack", 
+    "start": "NODE_ENV=production node server.js",
+    "start:next": "next start",
     "lint": "eslint"
   },
   "dependencies": {

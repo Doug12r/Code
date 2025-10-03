@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
 import { Play, Search, Film, Tv, Clock, Star } from 'lucide-react';
 import Image from 'next/image';
+import EpisodeSelectionModal from '@/components/episode-selection-modal';
 
 interface PlexMedia {
   ratingKey: string;
@@ -52,6 +53,8 @@ export default function MediaLibrary({ onSelectMedia, plexToken, plexUrl }: Medi
   const [error, setError] = useState<string>('');
   const [imageErrors, setImageErrors] = useState<Set<string>>(new Set());
   const [isSearching, setIsSearching] = useState(false);
+  const [showEpisodeModal, setShowEpisodeModal] = useState(false);
+  const [selectedTVShow, setSelectedTVShow] = useState<PlexMedia | null>(null);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Load Plex libraries on component mount
@@ -81,20 +84,37 @@ export default function MediaLibrary({ onSelectMedia, plexToken, plexUrl }: Medi
   }, []);
 
   const loadLibrariesWithRetry = async (retries = 2): Promise<void> => {
+    if (!plexToken || !plexUrl) {
+      console.error('MediaLibrary: No Plex token or URL available');
+      setError('Plex configuration not available');
+      setLoading(false);
+      return;
+    }
+
     for (let attempt = 0; attempt <= retries; attempt++) {
       try {
-        console.log(`Loading Plex libraries... (attempt ${attempt + 1}/${retries + 1})`);
-        const response = await fetch('/api/plex/libraries', {
+        console.log(`Loading Plex libraries directly... (attempt ${attempt + 1}/${retries + 1})`);
+        
+        // Make direct request to Plex server instead of going through authentication API
+        const plexParams = new URLSearchParams({
+          'X-Plex-Token': plexToken,
+          'X-Plex-Client-Identifier': 'plex-watch-together',
+          'X-Plex-Product': 'Plex Watch Together',
+          'X-Plex-Version': '1.0.0'
+        });
+
+        const response = await fetch(`${plexUrl}/library/sections?${plexParams.toString()}`, {
           headers: {
+            'Accept': 'application/json',
             'Content-Type': 'application/json',
           }
         });
 
-        console.log('Libraries API response status:', response.status);
+        console.log('Direct Plex libraries response status:', response.status);
 
         if (!response.ok) {
-          const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
-          console.error('Libraries API error:', errorData);
+          const errorText = await response.text().catch(() => 'Unknown error');
+          console.error('Direct Plex libraries error:', errorText);
           
           // If it's a server error and we have retries left, try again
           if (response.status >= 500 && attempt < retries) {
@@ -103,20 +123,36 @@ export default function MediaLibrary({ onSelectMedia, plexToken, plexUrl }: Medi
             continue;
           }
           
-          throw new Error(errorData.error || `Failed to load libraries (${response.status})`);
+          throw new Error(`Failed to load libraries (${response.status}): ${errorText}`);
         }
 
         const data = await response.json();
-        console.log('Libraries data received:', data);
+        console.log('Direct Plex libraries data received:', data);
         
-        if (!data || typeof data !== 'object') {
-          throw new Error('Invalid response format from libraries API');
+        if (!data || !data.MediaContainer || !Array.isArray(data.MediaContainer.Directory)) {
+          throw new Error('Invalid response format from Plex server');
         }
         
-        setLibraries(data.libraries || []);
+        // Transform Plex API format to our internal format
+        const plexLibraries = data.MediaContainer.Directory
+          .filter((dir: any) => dir.type === 'movie' || dir.type === 'show')
+          .map((dir: any) => ({
+            key: dir.key,
+            title: dir.title,
+            type: dir.type,
+            agent: dir.agent,
+            scanner: dir.scanner,
+            language: dir.language,
+            uuid: dir.uuid,
+            updatedAt: dir.updatedAt,
+            createdAt: dir.createdAt,
+            refreshing: dir.refreshing || false
+          }));
+        
+        setLibraries(plexLibraries);
         
         // Auto-select first movie/show library
-        const movieLibrary = data.libraries?.find((lib: PlexLibrary) => 
+        const movieLibrary = plexLibraries.find((lib: PlexLibrary) => 
           lib.type === 'movie' || lib.type === 'show'
         );
         if (movieLibrary) {
@@ -157,20 +193,36 @@ export default function MediaLibrary({ onSelectMedia, plexToken, plexUrl }: Medi
   };
 
   const loadLibraryMediaWithRetry = async (libraryKey: string, retries = 2): Promise<void> => {
+    if (!plexToken || !plexUrl) {
+      console.error('MediaLibrary: No Plex token or URL available for media loading');
+      setError('Plex configuration not available');
+      return;
+    }
+
     for (let attempt = 0; attempt <= retries; attempt++) {
       try {
-        console.log(`Loading media for library ${libraryKey}... (attempt ${attempt + 1}/${retries + 1})`);
-        const response = await fetch(`/api/plex/libraries/${libraryKey}/media`, {
+        console.log(`Loading media for library ${libraryKey} directly... (attempt ${attempt + 1}/${retries + 1})`);
+        
+        // Make direct request to Plex server for library media
+        const plexParams = new URLSearchParams({
+          'X-Plex-Token': plexToken,
+          'X-Plex-Client-Identifier': 'plex-watch-together',
+          'X-Plex-Product': 'Plex Watch Together',
+          'X-Plex-Version': '1.0.0'
+        });
+
+        const response = await fetch(`${plexUrl}/library/sections/${libraryKey}/all?${plexParams.toString()}`, {
           headers: {
+            'Accept': 'application/json',
             'Content-Type': 'application/json',
           }
         });
 
-        console.log('Media API response status:', response.status);
+        console.log('Direct Plex media response status:', response.status);
 
         if (!response.ok) {
-          const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
-          console.error('Media API error:', errorData);
+          const errorText = await response.text().catch(() => 'Unknown error');
+          console.error('Direct Plex media error:', errorText);
           
           // If it's a server error and we have retries left, try again
           if (response.status >= 500 && attempt < retries) {
@@ -179,18 +231,37 @@ export default function MediaLibrary({ onSelectMedia, plexToken, plexUrl }: Medi
             continue;
           }
           
-          throw new Error(errorData.error || `Failed to load media (${response.status})`);
+          throw new Error(`Failed to load media (${response.status}): ${errorText}`);
         }
 
         const data = await response.json();
-        console.log('Media data received:', data);
-        console.log('Media items loaded:', data.media?.length || 0, 'items');
+        console.log('Direct Plex media data received:', data);
         
-        if (!data || typeof data !== 'object') {
-          throw new Error('Invalid response format from media API');
+        if (!data || !data.MediaContainer || !Array.isArray(data.MediaContainer.Metadata)) {
+          console.log('No media found or invalid format:', data);
+          setMedia([]);
+          return;
         }
         
-        setMedia(data.media || []);
+        // Transform Plex API format to our internal format
+        const plexMedia = data.MediaContainer.Metadata.map((item: any) => ({
+          ratingKey: item.ratingKey,
+          key: item.key,
+          guid: item.guid,
+          title: item.title,
+          summary: item.summary,
+          year: item.year,
+          thumb: item.thumb,
+          art: item.art,
+          type: item.type,
+          duration: item.duration,
+          addedAt: item.addedAt,
+          updatedAt: item.updatedAt,
+          Media: item.Media || []
+        }));
+        
+        console.log('Media items loaded:', plexMedia.length, 'items');
+        setMedia(plexMedia);
         return; // Success, exit retry loop
       } catch (err) {
         console.error(`Error loading media (attempt ${attempt + 1}):`, err);
@@ -290,6 +361,39 @@ export default function MediaLibrary({ onSelectMedia, plexToken, plexUrl }: Medi
 
   const handleImageError = (ratingKey: string) => {
     setImageErrors((prev: Set<string>) => new Set([...prev, ratingKey]));
+  };
+
+  const handleMediaSelect = (item: PlexMedia) => {
+    if (item.type === 'show') {
+      // For TV shows, open episode selection modal
+      setSelectedTVShow(item);
+      setShowEpisodeModal(true);
+    } else {
+      // For movies, select directly
+      onSelectMedia(item);
+    }
+  };
+
+  const handleEpisodeSelect = (episode: any) => {
+    // Convert episode to PlexMedia format and select it
+    const episodeMedia: PlexMedia = {
+      ratingKey: episode.ratingKey,
+      key: episode.key || '',
+      title: `${episode.grandparentTitle || selectedTVShow?.title} - S${episode.parentIndex}E${episode.index} - ${episode.title}`,
+      summary: episode.summary,
+      year: episode.year,
+      duration: episode.duration,
+      rating: episode.rating,
+      thumb: episode.thumb,
+      art: episode.art,
+      type: 'episode',
+      studio: selectedTVShow?.studio,
+      addedAt: episode.addedAt
+    };
+    
+    onSelectMedia(episodeMedia);
+    setShowEpisodeModal(false);
+    setSelectedTVShow(null);
   };
 
   const filteredMedia = media.filter(item =>
@@ -414,7 +518,7 @@ export default function MediaLibrary({ onSelectMedia, plexToken, plexUrl }: Medi
             <Card key={item.ratingKey} className="group cursor-pointer hover:shadow-lg transition-shadow">
               <div 
                 className="relative aspect-[2/3] overflow-hidden rounded-t-lg"
-                onClick={() => onSelectMedia(item)}
+                onClick={() => handleMediaSelect(item)}
               >
                 <Image
                   src={getImageUrl(item.thumb, item.ratingKey)}
@@ -427,8 +531,17 @@ export default function MediaLibrary({ onSelectMedia, plexToken, plexUrl }: Medi
                 />
                 <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                   <Button size="sm" className="gap-2">
-                    <Play className="h-4 w-4" />
-                    Select
+                    {item.type === 'show' ? (
+                      <>
+                        <Tv className="h-4 w-4" />
+                        Browse Episodes
+                      </>
+                    ) : (
+                      <>
+                        <Play className="h-4 w-4" />
+                        Select
+                      </>
+                    )}
                   </Button>
                 </div>
                 {item.rating && (
@@ -485,6 +598,19 @@ export default function MediaLibrary({ onSelectMedia, plexToken, plexUrl }: Medi
           </CardContent>
         </Card>
       )}
+
+      {/* Episode Selection Modal */}
+      <EpisodeSelectionModal
+        show={selectedTVShow}
+        isOpen={showEpisodeModal}
+        onClose={() => {
+          setShowEpisodeModal(false);
+          setSelectedTVShow(null);
+        }}
+        onSelectEpisode={handleEpisodeSelect}
+        plexToken={plexToken}
+        plexUrl={plexUrl}
+      />
     </div>
   );
 }
