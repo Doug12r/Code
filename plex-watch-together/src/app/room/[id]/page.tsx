@@ -12,6 +12,7 @@ import { Separator } from '@/components/ui/separator'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import MediaLibrary from '@/components/media-library'
 import { SyncedVideoPlayer } from '@/components/synced-video-player'
+import { RealTimePerformanceDashboard } from '@/components/real-time-performance-dashboard'
 import { useSocket } from '@/hooks/useSocket'
 import { toast } from 'sonner'
 import { 
@@ -24,7 +25,8 @@ import {
   WifiIcon,
   WifiOffIcon,
   VideoIcon,
-  TvIcon
+  TvIcon,
+  ActivityIcon
 } from 'lucide-react'
 
 interface Room {
@@ -93,6 +95,7 @@ export default function RoomPage() {
   // UI State
   const [showMediaLibrary, setShowMediaLibrary] = useState(false)
   const [showChat, setShowChat] = useState(true)
+  const [showPerformance, setShowPerformance] = useState(false)
   const [chatInput, setChatInput] = useState('')
   
   // Socket connection
@@ -399,10 +402,28 @@ export default function RoomPage() {
                 <VideoIcon className="h-4 w-4 mr-2" />
                 Select Media
               </Button>
+
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowPerformance(!showPerformance)}
+              >
+                <ActivityIcon className="h-4 w-4 mr-2" />
+                {showPerformance ? 'Hide' : 'Show'} Performance
+              </Button>
             </div>
           </div>
         </div>
       </div>
+
+      {/* Performance Dashboard */}
+      {showPerformance && (
+        <div className="border-b bg-muted/30">
+          <div className="container mx-auto px-4 py-4">
+            <RealTimePerformanceDashboard roomId={roomId} />
+          </div>
+        </div>
+      )}
 
       {/* Main Content */}
       <div className="container mx-auto px-4 py-6">
