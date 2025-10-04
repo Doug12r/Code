@@ -98,6 +98,46 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
+    const { searchParams } = new URL(request.url)
+    const roomId = searchParams.get('roomId')
+
+    // If requesting specific room info for joining purposes
+    if (roomId) {
+      const room = await prisma.watchRoom.findUnique({
+        where: { 
+          id: roomId,
+          isPublic: true, // Only allow fetching public rooms
+          isActive: true 
+        },
+        select: {
+          id: true,
+          name: true,
+          description: true,
+          isPublic: true,
+          inviteCode: true,
+          maxMembers: true,
+          creator: {
+            select: {
+              id: true,
+              name: true,
+              image: true,
+            }
+          },
+          _count: {
+            select: {
+              members: true,
+            }
+          }
+        }
+      })
+
+      if (!room) {
+        return NextResponse.json({ error: 'Room not found or not public' }, { status: 404 })
+      }
+
+      return NextResponse.json({ room })
+    }
+
     // Get user's rooms (where they are a member)
     const rooms = await prisma.watchRoom.findMany({
       where: {

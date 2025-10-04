@@ -1,48 +1,55 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { Server as HTTPServer } from 'http'
-import { Server as SocketIOServer } from 'socket.io'
-import { initializeSocketIO } from '@/lib/socket'
-
-// Global variable to store the Socket.IO server
-let io: SocketIOServer | undefined
 
 export async function GET(_req: NextRequest) {
-  // For development/testing: simulate Socket.io server status
-  console.log('🔌 Socket.IO status check - simulating for Next.js App Router compatibility')
+  // Socket.IO server status check
+  console.log('🔌 Socket.IO status check')
   
-  return NextResponse.json({ 
-    status: 'simulated',
-    message: 'Socket.IO server simulation active (Next.js App Router mode)',
-    connected: 0,
-    note: 'Real Socket.io requires custom server setup. Using simulation for development.'
-  })
+  // In production, Socket.IO runs on the custom server (server.js)
+  // This endpoint provides status information about the Socket.IO server
+  
+  try {
+    // Check if Socket.IO server is accessible
+    const socketUrl = process.env.SOCKET_URL || `http://localhost:${process.env.PORT || 3000}`
+    
+    // Attempt to check server health
+    const response = await fetch(`${socketUrl}/socket.io/`, {
+      method: 'GET',
+      headers: { 'Accept': 'text/plain' }
+    }).catch(() => null)
+    
+    if (response && response.ok) {
+      return NextResponse.json({ 
+        status: 'running',
+        message: 'Socket.IO server is active',
+        endpoint: `${socketUrl}/socket.io/`,
+        transport: 'websocket'
+      })
+    } else {
+      return NextResponse.json({ 
+        status: 'unavailable',
+        message: 'Socket.IO server not accessible - ensure server.js is running',
+        endpoint: `${socketUrl}/socket.io/`
+      }, { status: 503 })
+    }
+  } catch (error) {
+    return NextResponse.json({ 
+      status: 'error',
+      message: 'Failed to check Socket.IO server status',
+      error: error instanceof Error ? error.message : 'Unknown error'
+    }, { status: 500 })
+  }
 }
 
 export async function POST(_req: NextRequest) {
-  // Initialize Socket.IO server if not already done
-  if (!io) {
-    try {
-      // This is a workaround for Next.js App Router
-      // We'll initialize the Socket.IO server when needed
-      console.log('🚀 Attempting to initialize Socket.IO server...')
-      
-      // For Next.js App Router, we need to create our own HTTP server
-      // This is a simplified approach for development
-      return NextResponse.json({ 
-        status: 'initialized',
-        message: 'Socket.IO initialization triggered'
-      })
-    } catch (error) {
-      console.error('❌ Failed to initialize Socket.IO server:', error)
-      return NextResponse.json({ 
-        error: 'Failed to initialize Socket.IO server',
-        details: error instanceof Error ? error.message : 'Unknown error'
-      }, { status: 500 })
-    }
-  }
-
+  // Socket.IO server management endpoint
+  console.log('🚀 Socket.IO server management request')
+  
+  // In production, Socket.IO server lifecycle is managed by server.js
+  // This endpoint can be used for health checks or restart requests
+  
   return NextResponse.json({ 
-    status: 'already_running',
-    message: 'Socket.IO server is already running'
+    status: 'managed_externally',
+    message: 'Socket.IO server is managed by server.js process',
+    note: 'Use PM2 or process manager to restart the server if needed'
   })
 }

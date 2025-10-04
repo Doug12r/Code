@@ -6,19 +6,27 @@ services:
     build:
       context: .
       target: runner
+      args:
+        - NODE_ENV=production
     ports:
       - "${PORT:-3000}:3000"
     environment:
       - NODE_ENV=production
       - DATABASE_URL=postgresql://plexuser:${POSTGRES_PASSWORD:-plexsecure}@postgres:5432/plexwatchtogether
       - REDIS_URL=redis://redis:6379
+      - NEXTAUTH_URL=${NEXTAUTH_URL:-http://localhost:3000}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - ENABLE_MONITORING=${ENABLE_MONITORING:-true}
     env_file:
       - .env.local
     volumes:
-      # Mount for SQLite database (if using SQLite instead of PostgreSQL)
+      # Mount for application data and logs
       - app_data:/app/data
+      - app_logs:/app/logs
       # Mount for transcoded video cache
       - transcode_cache:/app/cache
+      # Mount for uploads and temporary files
+      - uploads:/app/uploads
     depends_on:
       postgres:
         condition: service_healthy
@@ -30,17 +38,23 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1G
-          cpus: '1.0'
+          memory: 2G
+          cpus: '1.5'
         reservations:
           memory: 512M
           cpus: '0.5'
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    security_opt:
+      - no-new-privileges:true
+    user: "1001:1001"
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=50m
 
   # PostgreSQL Database
   postgres:
@@ -165,12 +179,40 @@ services:
 volumes:
   postgres_data:
     driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${DATA_PATH:-./data}/postgres
   redis_data:
     driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${DATA_PATH:-./data}/redis
   app_data:
     driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${DATA_PATH:-./data}/app
+  app_logs:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${LOG_PATH:-./logs}
   transcode_cache:
     driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${CACHE_PATH:-./cache}
+  uploads:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${UPLOAD_PATH:-./uploads}
   prometheus_data:
     driver: local
   grafana_data:

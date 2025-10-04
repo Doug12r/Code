@@ -1,338 +1,695 @@
-# Production Deployment Guide
+# Deployment Guide
 
-## 🚀 Deployment Options
+This comprehensive guide covers the deployment process for the Plex Watch Together application across different environments, from local development to production cloud deployment.
 
-### Vercel (Recommended)
-Easiest deployment with automatic CI/CD:
+## Table of Contents
 
-```bash
-# Install Vercel CLI
-npm i -g vercel
+1. [Prerequisites](#prerequisites)
+2. [Development Environment](#development-environment)
+3. [Staging Environment](#staging-environment)
+4. [Production Environment](#production-environment)
+5. [Infrastructure as Code](#infrastructure-as-code)
+6. [CI/CD Pipeline](#cicd-pipeline)
+7. [Monitoring and Observability](#monitoring-and-observability)
+8. [Security Considerations](#security-considerations)
+9. [Troubleshooting](#troubleshooting)
 
-# Deploy
-vercel
+## Prerequisites
 
-# Environment variables (set in Vercel dashboard)
-DATABASE_URL=postgresql://user:pass@host:5432/dbname
-REDIS_URL=redis://user:pass@host:6379
-NEXTAUTH_SECRET=your-secret-key
-NEXTAUTH_URL=https://your-domain.com
-ENCRYPTION_KEY=your-encryption-key
-ADMIN_EMAIL=admin@yoursite.com
-ADMIN_PASSWORD=secure-admin-password
+### Local Development
+- Docker 24.0+ and Docker Compose 2.0+
+- Node.js 20+ and pnpm 8+
+- Git 2.30+
+- VS Code with recommended extensions
+
+### Cloud Deployment
+- AWS CLI 2.0+ configured with appropriate permissions
+- Terraform 1.0+ for infrastructure management
+- Docker Hub or AWS ECR access for container registry
+- Domain name and SSL certificate (optional)
+
+### Required AWS Permissions
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ecs:*",
+        "ec2:*",
+        "rds:*",
+        "elasticache:*",
+        "elbv2:*",
+        "logs:*",
+        "secretsmanager:*",
+        "iam:*",
+        "ecr:*"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
 ```
 
-### Docker (Self-hosted)
-For complete control and self-hosting:
+## Development Environment
 
-```dockerfile
-FROM node:18-alpine AS base
+### Automated Setup
 
+The fastest way to get started:
+
+```bash
+# Clone the repository
+git clone https://github.com/your-org/plex-watch-together.git
+cd plex-watch-together
+
+# Run automated development setup
+chmod +x scripts/dev-setup.sh
+./scripts/dev-setup.sh
+```
+
+This script will:
+- Install system dependencies (Node.js, Docker, etc.)
+- Set up project environment files
+- Install npm dependencies
+- Initialize the database
+- Configure VS Code settings
+- Create Git hooks for code quality
+
+### Manual Setup
+
+If you prefer manual setup or encounter issues:
+
+```bash
 # Install dependencies
-FROM base AS deps
-WORKDIR /app
-COPY package.json package-lock.json ./
-RUN npm ci --only=production
+pnpm install
 
-# Build application  
-FROM base AS builder
-WORKDIR /app
-COPY . .
-COPY --from=deps /app/node_modules ./node_modules
-RUN npm run build
+# Setup environment files
+cp .env.example .env.local
+cp .env.example .env.development
 
-# Production image
-FROM base AS runner
-WORKDIR /app
+# Start infrastructure services
+docker-compose up -d postgres redis
 
-ENV NODE_ENV=production
-ENV NEXT_TELEMETRY_DISABLED=1
+# Run database migrations
+pnpm prisma migrate dev
 
-RUN addgroup --system --gid 1001 nodejs
-RUN adduser --system --uid 1001 nextjs
+# Seed the database (optional)
+pnpm prisma db seed
 
-COPY --from=builder /app/public ./public
-COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
-COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
-
-USER nextjs
-
-EXPOSE 3000
-
-ENV PORT=3000
-ENV HOSTNAME="0.0.0.0"
-
-CMD ["node", "server.js"]
+# Start development server
+pnpm dev
 ```
 
-### Railway
-Simple deployment with built-in PostgreSQL:
+### Development Environment Configuration
 
-```bash
-# Install Railway CLI
-npm i -g @railway/cli
+Edit `.env.local` with your specific configuration:
 
-# Login and deploy
-railway login
-railway init
-railway add postgresql
-railway deploy
-```
-
-## 🔧 Environment Configuration
-
-### Required Environment Variables
-
-```bash
+```env
 # Database
-DATABASE_URL=postgresql://user:password@localhost:5432/plex_watch_together
-REDIS_URL=redis://localhost:6379
+DATABASE_URL="postgresql://postgres:password@localhost:5432/plex_dev"
+REDIS_URL="redis://localhost:6379"
 
 # Authentication
-NEXTAUTH_SECRET=super-secret-jwt-key-min-32-chars
-NEXTAUTH_URL=https://your-domain.com
+NEXTAUTH_URL="http://localhost:3000"
+NEXTAUTH_SECRET="your-development-secret-key"
 
-# Security  
-ENCRYPTION_KEY=your-encryption-key-for-tokens
+# Plex Configuration
+PLEX_SERVER_URL="http://your-plex-server:32400"
+PLEX_TOKEN="your-plex-token"
 
-# Admin Account
-ADMIN_EMAIL=admin@yoursite.com
-ADMIN_PASSWORD=secure-admin-password
-
-# Optional: Analytics
-VERCEL_ANALYTICS_ID=your-analytics-id
-SENTRY_DSN=your-sentry-dsn
+# Development Features
+NODE_ENV="development"
+LOG_LEVEL="debug"
+ENABLE_DEBUG_LOGS=true
+ENABLE_PERFORMANCE_MONITORING=true
 ```
 
-### Database Setup
+### Development Commands
 
-```sql
--- Create database
-CREATE DATABASE plex_watch_together;
-CREATE USER plex_user WITH PASSWORD 'secure_password';
-GRANT ALL PRIVILEGES ON DATABASE plex_watch_together TO plex_user;
+```bash
+# Start development server with hot reload
+pnpm dev
 
--- Run migrations (automatic in deployment)
-npx prisma migrate deploy
+# Run tests
+pnpm test
+pnpm test:watch
+
+# Run linting and formatting
+pnpm lint
+pnpm format
+
+# Type checking
+pnpm type-check
+
+# Build for production testing
+pnpm build
+
+# Clean development environment
+./scripts/cleanup.sh
 ```
 
-## 🔍 Health Monitoring
+## Staging Environment
 
-### Health Check Endpoints
+### Purpose
+The staging environment mirrors production configuration for integration testing and user acceptance testing.
+
+### Deployment Process
+
+```bash
+# Deploy to staging
+./scripts/deploy.sh staging deploy
+
+# Check deployment status
+./scripts/deploy.sh staging status
+
+# Run health checks
+curl -f https://staging.plexwatchtogether.com/api/health
+```
+
+### Staging Configuration
+
+Staging uses reduced resources for cost optimization:
+
+```yaml
+# docker-compose.staging.yml
+services:
+  app:
+    replicas: 1
+    resources:
+      limits:
+        memory: 1G
+        cpus: 0.5
+      reservations:
+        memory: 512M
+        cpus: 0.25
+
+  postgres:
+    environment:
+      - POSTGRES_SHARED_BUFFERS=128MB
+      - POSTGRES_EFFECTIVE_CACHE_SIZE=512MB
+```
+
+### Environment Variables
+
+```env
+# Staging environment (.env.staging)
+NODE_ENV="staging"
+DATABASE_URL="postgresql://postgres:${DB_PASSWORD}@staging-db:5432/plex"
+REDIS_URL="redis://staging-redis:6379"
+NEXTAUTH_URL="https://staging.plexwatchtogether.com"
+LOG_LEVEL="info"
+ENABLE_DEBUG_LOGS=false
+```
+
+## Production Environment
+
+### Architecture Overview
+
+Production deployment uses AWS ECS with the following components:
+
+- **Application Layer**: ECS Fargate with auto-scaling
+- **Load Balancer**: Application Load Balancer with SSL termination
+- **Database**: RDS PostgreSQL with Multi-AZ deployment
+- **Cache**: ElastiCache Redis cluster
+- **Storage**: EFS for shared file storage
+- **Monitoring**: CloudWatch, Prometheus, and Grafana
+
+### Infrastructure Deployment
+
+```bash
+# Navigate to infrastructure directory
+cd infrastructure
+
+# Initialize Terraform
+terraform init
+
+# Review deployment plan
+terraform plan -var-file="environments/production.tfvars"
+
+# Deploy infrastructure
+terraform apply -var-file="environments/production.tfvars"
+
+# Note the outputs for application deployment
+terraform output
+```
+
+### Application Deployment
+
+#### Option 1: Automated Deployment Script
+
+```bash
+# Deploy to production with blue-green deployment
+./scripts/deploy.sh production deploy
+
+# Monitor deployment
+./scripts/deploy.sh production status
+
+# Rollback if needed
+./scripts/deploy.sh production rollback
+```
+
+#### Option 2: Manual Deployment
+
+```bash
+# Build and push Docker image
+docker build -t plex-watch-together:latest .
+docker tag plex-watch-together:latest ${ECR_URI}:latest
+docker push ${ECR_URI}:latest
+
+# Update ECS service
+aws ecs update-service \
+  --cluster plex-watch-together-prod \
+  --service plex-watch-together-service \
+  --force-new-deployment
+
+# Monitor deployment
+aws ecs wait services-stable \
+  --cluster plex-watch-together-prod \
+  --services plex-watch-together-service
+```
+
+### Production Configuration
+
+```env
+# Production environment (.env.production)
+NODE_ENV="production"
+DATABASE_URL="${DATABASE_SECRET_ARN}"
+REDIS_URL="${REDIS_SECRET_ARN}"
+NEXTAUTH_URL="https://plexwatchtogether.com"
+LOG_LEVEL="warn"
+ENABLE_DEBUG_LOGS=false
+ENABLE_PERFORMANCE_MONITORING=true
+```
+
+### High Availability Configuration
+
+```yaml
+# ECS Service Configuration
+services:
+  app:
+    replicas: 2
+    deployment_configuration:
+      maximum_percent: 200
+      minimum_healthy_percent: 100
+      deployment_circuit_breaker:
+        enable: true
+        rollback: true
+    health_check:
+      path: /api/health
+      interval: 30s
+      timeout: 5s
+      healthy_threshold: 2
+      unhealthy_threshold: 3
+```
+
+## Infrastructure as Code
+
+### Terraform Structure
+
+```
+infrastructure/
+├── main.tf              # Main infrastructure resources
+├── variables.tf         # Input variables and configuration
+├── outputs.tf          # Output values and connection info
+├── database.tf         # RDS and ElastiCache configuration
+├── ecs.tf             # ECS cluster and service configuration
+├── alb.tf             # Load balancer and target groups
+├── iam.tf             # IAM roles and policies
+├── monitoring.tf      # CloudWatch and alerting
+├── security.tf        # Security groups and WAF
+└── environments/      # Environment-specific configurations
+    ├── dev.tfvars
+    ├── staging.tfvars
+    └── production.tfvars
+```
+
+### Environment-Specific Variables
+
+```hcl
+# environments/production.tfvars
+environment = "production"
+aws_region  = "us-west-2"
+
+# ECS Configuration
+ecs_service_desired_count = 2
+ecs_task_cpu             = 1024
+ecs_task_memory          = 2048
+
+# Database Configuration
+db_instance_class        = "db.t3.medium"
+db_multi_az             = true
+db_deletion_protection  = true
+db_backup_retention_period = 30
+
+# Redis Configuration
+redis_node_type         = "cache.t3.small"
+redis_num_cache_nodes   = 2
+
+# Auto Scaling
+autoscaling_min_capacity = 2
+autoscaling_max_capacity = 10
+autoscaling_target_cpu   = 70
+
+# Domain Configuration
+domain_name            = "plexwatchtogether.com"
+create_route53_record  = true
+route53_zone_id       = "Z1234567890ABC"
+ssl_certificate_arn   = "arn:aws:acm:us-west-2:123456789012:certificate/12345678-1234-1234-1234-123456789012"
+```
+
+### Infrastructure Commands
+
+```bash
+# Plan infrastructure changes
+terraform plan -var-file="environments/production.tfvars" -out=production.plan
+
+# Apply infrastructure changes
+terraform apply production.plan
+
+# Show infrastructure state
+terraform show
+
+# Destroy infrastructure (use with caution)
+terraform destroy -var-file="environments/production.tfvars"
+```
+
+## CI/CD Pipeline
+
+### GitHub Actions Workflow
+
+The CI/CD pipeline automatically handles:
+
+1. **Code Quality Checks**
+   - TypeScript compilation
+   - ESLint and Prettier checks
+   - Unit and integration tests
+   - Security vulnerability scanning
+
+2. **Docker Build and Push**
+   - Multi-stage Docker builds
+   - Security scanning with Trivy
+   - Push to ECR registry
+
+3. **Deployment**
+   - Automated deployment to staging
+   - Manual approval for production
+   - Blue-green deployment strategy
+   - Post-deployment health checks
+
+### Pipeline Configuration
+
+```yaml
+# .github/workflows/ci-cd.yml
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test:ci
+
+  build-and-deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Deploy to Production
+        run: ./scripts/deploy.sh production deploy
+```
+
+### Manual Deployment
+
+For emergency deployments or when CI/CD is unavailable:
+
+```bash
+# Create deployment branch
+git checkout -b deploy/$(date +%Y%m%d-%H%M%S)
+
+# Build and test locally
+pnpm install
+pnpm build
+pnpm test
+
+# Deploy manually
+./scripts/deploy.sh production deploy --force
+
+# Tag the release
+git tag -a v$(date +%Y%m%d.%H%M) -m "Manual deployment $(date)"
+git push origin --tags
+```
+
+## Monitoring and Observability
+
+### Health Checks
+
+The application provides comprehensive health check endpoints:
 
 ```bash
 # Application health
-GET /api/health
+curl -f https://plexwatchtogether.com/api/health
 
-# Database health  
-GET /api/health/database
+# Detailed health with components
+curl -f https://plexwatchtogether.com/api/health?detailed=true
 
-# Redis health
-GET /api/health/redis
+# Database connectivity
+curl -f https://plexwatchtogether.com/api/health/database
 
-# Plex service health
-GET /api/health/plex
+# Redis connectivity
+curl -f https://plexwatchtogether.com/api/health/redis
+
+# External services (Plex)
+curl -f https://plexwatchtogether.com/api/health/external
 ```
 
-### Monitoring Setup
+### Logging
 
-```javascript
-// Add to your monitoring service
-const endpoints = [
-  'https://yoursite.com/api/health',
-  'https://yoursite.com/api/health/database',
-  'https://yoursite.com/api/health/redis'
-]
+#### Application Logs
+```bash
+# View real-time logs
+aws logs tail /aws/ecs/plex-watch-together --follow
 
-// Check every 5 minutes
-setInterval(checkEndpoints, 5 * 60 * 1000)
+# Filter error logs
+aws logs filter-log-events \
+  --log-group-name /aws/ecs/plex-watch-together \
+  --filter-pattern "ERROR"
+
+# Query logs with CloudWatch Insights
+aws logs start-query \
+  --log-group-name /aws/ecs/plex-watch-together \
+  --start-time $(date -d '1 hour ago' +%s) \
+  --end-time $(date +%s) \
+  --query-string 'fields @timestamp, @message | filter @message like /ERROR/'
 ```
 
-## 📊 Performance Monitoring
+#### Infrastructure Logs
+```bash
+# ECS service events
+aws ecs describe-services \
+  --cluster plex-watch-together-prod \
+  --services plex-watch-together-service \
+  --query 'services[0].events[0:10]'
 
-### Key Metrics to Track
+# ALB access logs (if enabled)
+aws s3 ls s3://your-alb-logs-bucket/AWSLogs/
+```
 
-- Response times per endpoint
-- Database connection pool usage
-- Redis cache hit rates
-- Active WebSocket connections
-- Error rates and types
+### Metrics and Alerting
 
-### Recommended Tools
+#### CloudWatch Metrics
 
-- **Vercel Analytics**: Built-in performance monitoring
-- **Sentry**: Error tracking and performance monitoring
-- **DataDog**: Comprehensive APM solution
-- **New Relic**: Full-stack monitoring
+Key metrics to monitor:
 
-## 🔒 Security Checklist
+- **Application Metrics**
+  - Request count and latency
+  - Error rate (4xx/5xx responses)
+  - Active connections
+  - Memory and CPU usage
 
-### Pre-deployment Security
+- **Database Metrics**
+  - Connection count
+  - Query performance
+  - Deadlocks and slow queries
+  - Disk usage and IOPS
 
-- [ ] Environment variables secured
-- [ ] Rate limiting configured
-- [ ] HTTPS enforced
-- [ ] Security headers set
-- [ ] Database credentials rotated
-- [ ] JWT secrets generated (32+ characters)
-- [ ] Admin account secured
-- [ ] Plex tokens encrypted
+- **Infrastructure Metrics**
+  - ECS task health
+  - Load balancer target health
+  - Network throughput
+  - Auto-scaling activities
 
-### Post-deployment Security
+#### Custom Dashboards
 
-- [ ] SSL certificate valid
-- [ ] Security headers verified
-- [ ] Rate limiting tested
-- [ ] Database access restricted
-- [ ] Backup strategy implemented
-- [ ] Monitoring alerts configured
+```bash
+# Create CloudWatch dashboard
+aws cloudwatch put-dashboard \
+  --dashboard-name "PlexWatchTogether-Production" \
+  --dashboard-body file://monitoring/cloudwatch-dashboard.json
+```
 
-## 🚨 Troubleshooting
+### Performance Monitoring
+
+#### Application Performance Monitoring (APM)
+- Request tracing with X-Ray
+- Custom metrics with CloudWatch
+- Real-user monitoring (RUM)
+
+#### Database Performance
+- RDS Performance Insights
+- Slow query analysis
+- Connection pool monitoring
+
+## Security Considerations
+
+### Network Security
+
+```bash
+# Review security groups
+aws ec2 describe-security-groups \
+  --filters "Name=group-name,Values=plex-watch-together-*"
+
+# Check WAF rules (if enabled)
+aws wafv2 list-web-acls --scope REGIONAL
+```
+
+### Data Security
+
+#### Secrets Management
+```bash
+# Rotate database password
+aws secretsmanager rotate-secret \
+  --secret-id plex-watch-together-prod-db-credentials
+
+# Update application secrets
+aws secretsmanager update-secret \
+  --secret-id plex-watch-together-prod-app-secrets \
+  --secret-string file://new-secrets.json
+```
+
+#### SSL/TLS Configuration
+- TLS 1.3 for all connections
+- HSTS headers enabled
+- Certificate auto-renewal via AWS Certificate Manager
+
+### Access Control
+
+#### IAM Best Practices
+- Least-privilege access policies
+- Regular access review and rotation
+- MFA requirement for all human access
+- Service-linked roles for AWS services
+
+## Troubleshooting
 
 ### Common Issues
 
-#### Database Connection Errors
+#### Application Won't Start
 ```bash
-# Check connection string
-echo $DATABASE_URL
+# Check ECS service status
+aws ecs describe-services \
+  --cluster plex-watch-together-prod \
+  --services plex-watch-together-service
 
-# Test connection
-npx prisma db push --preview-feature
+# Check task definition
+aws ecs describe-task-definition \
+  --task-definition plex-watch-together:latest
+
+# View task logs
+aws logs tail /aws/ecs/plex-watch-together --follow
 ```
 
-#### Redis Connection Issues
-```bash  
-# Test Redis connection
-redis-cli -u $REDIS_URL ping
+#### Database Connection Issues
+```bash
+# Test database connectivity from ECS task
+aws ecs execute-command \
+  --cluster plex-watch-together-prod \
+  --task <task-id> \
+  --container app \
+  --interactive \
+  --command "/bin/bash"
 
-# Check Redis memory
-redis-cli -u $REDIS_URL info memory
-```
-
-#### Socket.io Connection Problems
-```javascript
-// Enable debug logging
-localStorage.debug = 'socket.io-client:socket'
-
-// Check WebSocket upgrade
-// Network tab → WS filter in browser dev tools
+# Inside the container:
+pg_isready -h $DATABASE_HOST -p $DATABASE_PORT
 ```
 
 #### Performance Issues
 ```bash
-# Check cache hit rates
-curl https://yoursite.com/api/plex/v2/performance
-
-# Monitor response times
-curl -w "@curl-format.txt" https://yoursite.com/api/health
+# Check resource utilization
+aws cloudwatch get-metric-statistics \
+  --namespace AWS/ECS \
+  --metric-name CPUUtilization \
+  --dimensions Name=ServiceName,Value=plex-watch-together-service \
+  --start-time $(date -d '1 hour ago' --iso-8601) \
+  --end-time $(date --iso-8601) \
+  --period 300 \
+  --statistics Average,Maximum
 ```
 
-## 📈 Scaling Considerations
+### Recovery Procedures
 
-### Horizontal Scaling
-
-```yaml
-# docker-compose.yml for load balancing
-version: '3.8'
-services:
-  app1:
-    image: plex-watch-together
-    environment:
-      - PORT=3000
-  app2:
-    image: plex-watch-together  
-    environment:
-      - PORT=3001
-  nginx:
-    image: nginx
-    volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf
-    ports:
-      - "80:80"
-```
-
-### Database Scaling
-
+#### Database Recovery
 ```bash
-# Read replicas for PostgreSQL
-DATABASE_READ_URL=postgresql://readonly-user@read-replica:5432/db
+# Restore from automated backup
+aws rds restore-db-instance-from-db-snapshot \
+  --db-instance-identifier plex-watch-together-restored \
+  --db-snapshot-identifier plex-watch-together-prod-snapshot-2024-01-01
 
-# Connection pooling
-DATABASE_POOL_MAX=20
-DATABASE_POOL_MIN=5
+# Point-in-time recovery
+aws rds restore-db-instance-to-point-in-time \
+  --source-db-instance-identifier plex-watch-together-prod \
+  --target-db-instance-identifier plex-watch-together-recovered \
+  --restore-time 2024-01-01T12:00:00Z
 ```
 
-### Redis Clustering
-
+#### Application Recovery
 ```bash
-# Redis cluster for high availability
-REDIS_CLUSTER_NODES=redis1:6379,redis2:6379,redis3:6379
+# Force new deployment
+aws ecs update-service \
+  --cluster plex-watch-together-prod \
+  --service plex-watch-together-service \
+  --force-new-deployment
+
+# Scale up during high load
+aws ecs update-service \
+  --cluster plex-watch-together-prod \
+  --service plex-watch-together-service \
+  --desired-count 5
+
+# Emergency rollback
+./scripts/deploy.sh production rollback
 ```
 
-## 🔄 CI/CD Pipeline
+### Support Contacts
 
-### GitHub Actions Example
+- **DevOps Team**: devops@plexwatchtogether.com
+- **On-Call Engineer**: Use PagerDuty for urgent issues
+- **Documentation**: Internal wiki and runbooks
+- **Status Page**: status.plexwatchtogether.com
 
-```yaml
-name: Deploy
-on:
-  push:
-    branches: [main]
+## Conclusion
 
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-node@v3
-        with:
-          node-version: 18
-      - run: npm ci
-      - run: npm run build
-      - run: npm test
-      - uses: amondnet/vercel-action@v25
-        with:
-          vercel-token: ${{ secrets.VERCEL_TOKEN }}
-```
+This deployment guide provides comprehensive instructions for deploying the Plex Watch Together application across all environments. For additional information, refer to:
 
-## 📋 Deployment Checklist
+- [Architecture Documentation](ARCHITECTURE.md)
+- [Infrastructure Documentation](INFRASTRUCTURE.md)  
+- [Development Guide](README.md)
+- [Testing Documentation](TESTING.md)
 
-### Pre-deployment
-- [ ] All tests passing
-- [ ] Environment variables configured
-- [ ] Database migrations ready
-- [ ] SSL certificates obtained
-- [ ] Domain DNS configured
-- [ ] Monitoring tools setup
+Remember to follow security best practices, monitor your deployments, and maintain regular backups for production systems.
 
-### Deployment
-- [ ] Application deployed successfully
-- [ ] Database migrations applied
-- [ ] Health checks passing
-- [ ] SSL certificate active
-- [ ] Rate limiting functional
-- [ ] WebSocket connections working
+---
 
-### Post-deployment
-- [ ] Performance metrics baseline established
-- [ ] Error monitoring active
-- [ ] Backup strategy verified
-- [ ] Load testing completed
-- [ ] User acceptance testing passed
-- [ ] Documentation updated
-
-## 📞 Support
-
-### Getting Help
-
-- **Documentation**: Check ARCHITECTURE.md for technical details
-- **Issues**: GitHub Issues for bug reports
-- **Performance**: Use built-in monitoring dashboard
-- **Security**: Follow security best practices guide
-
-### Emergency Contacts
-
-- Database issues: Check connection pooling and query performance
-- Redis issues: Verify cache configuration and memory usage  
-- Application errors: Check error logs and monitoring dashboards
-- Security concerns: Review rate limiting and access logs
+*Last Updated: January 2024*
+*Version: 2.0*

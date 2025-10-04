@@ -9,6 +9,9 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
 import { Badge } from '@/components/ui/badge'
+import { DashboardSkeleton, RoomListSkeleton, LoadingText, ContextualLoader, LoadingOverlay } from '@/components/ui/skeleton'
+import { SmoothTransition, StaggeredTransition, LoadingStateDisplay, PageTransition } from '@/components/ui/transitions'
+import { useLoadingState, useRoomLoading, useMediaLoading } from '@/hooks/useLoadingState'
 import { 
   PlayIcon, 
   PlusIcon, 
@@ -38,22 +41,45 @@ interface DashboardProps {
 export function DashboardContent({ session }: DashboardProps) {
   const router = useRouter()
   const [rooms, setRooms] = useState([])
-  const [isLoadingRooms, setIsLoadingRooms] = useState(true)
   const [showCreateRoom, setShowCreateRoom] = useState(false)
   const [showJoinRoom, setShowJoinRoom] = useState(false)
   const [showPlexSetup, setShowPlexSetup] = useState(false)
   const [newRoomName, setNewRoomName] = useState('')
   const [joinCode, setJoinCode] = useState('')
-  const [isCreating, setIsCreating] = useState(false)
   const [plexStatus, setPlexStatus] = useState<any>(null)
   const [selectedMedia, setSelectedMedia] = useState<any>(null)
   const [showMediaLibrary, setShowMediaLibrary] = useState(false)
   const [showVideoPlayer, setShowVideoPlayer] = useState(false)
   const [deletingRoomId, setDeletingRoomId] = useState<string | null>(null)
+  const [isInitialLoading, setIsInitialLoading] = useState(true)
+
+  // Enhanced loading states
+  const roomLoading = useRoomLoading()
+  const mediaLoading = useMediaLoading()
+  const dashboardLoading = useLoadingState({
+    defaultTimeout: 30000,
+    enableEstimatedTime: true
+  })
 
   useEffect(() => {
-    fetchRooms()
-    checkPlexStatus()
+    const initializeDashboard = async () => {
+      dashboardLoading.startLoading({
+        type: 'room',
+        message: 'Loading dashboard...',
+        estimatedTime: 2000
+      })
+      
+      try {
+        await Promise.all([fetchRooms(), checkPlexStatus()])
+        dashboardLoading.completeLoading('Dashboard loaded successfully!')
+      } catch (error) {
+        dashboardLoading.errorLoading('Failed to load dashboard')
+      } finally {
+        setIsInitialLoading(false)
+      }
+    }
+
+    initializeDashboard()
   }, [])
 
   const checkPlexStatus = async () => {
@@ -80,7 +106,6 @@ export function DashboardContent({ session }: DashboardProps) {
 
   const fetchRooms = async () => {
     try {
-      setIsLoadingRooms(true)
       const response = await fetch('/api/rooms')
       const data = await response.json()
       
@@ -91,8 +116,7 @@ export function DashboardContent({ session }: DashboardProps) {
       }
     } catch (error) {
       toast.error('Failed to fetch rooms')
-    } finally {
-      setIsLoadingRooms(false)
+      throw error
     }
   }
 
@@ -102,7 +126,7 @@ export function DashboardContent({ session }: DashboardProps) {
       return
     }
 
-    setIsCreating(true)
+    roomLoading.createRoom(selectedMedia?.title)
     try {
       const response = await fetch('/api/rooms', {
         method: 'POST',
@@ -140,9 +164,12 @@ export function DashboardContent({ session }: DashboardProps) {
         toast.error(data.error || 'Failed to create room')
       }
     } catch (error) {
+      roomLoading.errorLoading('Failed to create room')
       toast.error('Failed to create room')
     } finally {
-      setIsCreating(false)
+      if (!roomLoading.error) {
+        roomLoading.completeLoading('Room created successfully!')
+      }
     }
   }
 
@@ -231,26 +258,28 @@ export function DashboardContent({ session }: DashboardProps) {
   }
 
   return (
+    <PageTransition>
+      <LoadingOverlay 
+        visible={dashboardLoading.isLoading}
+        type={dashboardLoading.state.type === 'idle' || dashboardLoading.state.type === 'error' ? 'room' : dashboardLoading.state.type}
+        message={dashboardLoading.state.message}
+        progress={dashboardLoading.state.progress}
+      />
+      
+      <LoadingOverlay 
+        visible={roomLoading.isLoading}
+        type="room"
+        message={roomLoading.state.message}
+        onCancel={roomLoading.state.canCancel ? roomLoading.cancelLoading : undefined}
+      />
+      
+      <LoadingOverlay 
+        visible={mediaLoading.isLoading}
+        type="media"
+        message={mediaLoading.state.message}
+      />
+
     <div className="min-h-screen bg-background">
-      {/* Header */}
-      <header className="border-b">
-        <div className="container mx-auto px-4 py-4 flex justify-between items-center">
-          <div className="flex items-center space-x-2">
-            <PlayIcon className="h-6 w-6 text-primary" />
-            <h1 className="text-xl font-semibold">Plex Watch Together</h1>
-          </div>
-          
-          <div className="flex items-center space-x-4">
-            <span className="text-sm text-muted-foreground">
-              Welcome, {session.user?.name || session.user?.email}
-            </span>
-            <Button variant="outline" size="sm" onClick={() => signOut()}>
-              <LogOutIcon className="h-4 w-4 mr-2" />
-              Sign Out
-            </Button>
-          </div>
-        </div>
-      </header>
 
       <div className="container mx-auto px-4 py-8 max-w-6xl">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -325,10 +354,14 @@ export function DashboardContent({ session }: DashboardProps) {
                   <div className="flex space-x-2">
                     <Button 
                       onClick={handleCreateRoom} 
-                      disabled={isCreating}
+                      disabled={roomLoading.isLoading}
                       className="flex-1"
                     >
-                      {isCreating ? 'Creating...' : 'Create Room'}
+                      {roomLoading.isLoading ? (
+                        <LoadingText text="Creating" />
+                      ) : (
+                        'Create Room'
+                      )}
                     </Button>
                     <Button 
                       variant="outline" 
@@ -388,18 +421,18 @@ export function DashboardContent({ session }: DashboardProps) {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                {isLoadingRooms ? (
-                  <div className="text-center py-8 text-muted-foreground">
-                    Loading rooms...
-                  </div>
-                ) : rooms.length === 0 ? (
+                <LoadingStateDisplay
+                  isLoading={isInitialLoading}
+                  loadingComponent={<RoomListSkeleton />}
+                >
+                  {rooms.length === 0 ? (
                   <div className="text-center py-8 text-muted-foreground">
                     <UsersIcon className="h-12 w-12 mx-auto mb-4 opacity-50" />
                     <p>No rooms yet</p>
                     <p className="text-sm">Create or join a room to get started</p>
                   </div>
                 ) : (
-                  <div className="space-y-4">
+                    <StaggeredTransition show={true} staggerDelay={100} className="space-y-4">
                     {rooms.map((room: any) => {
                       const isOwner = room.creator?.id === session.user?.id
                       const isActive = room.isActive
@@ -492,8 +525,9 @@ export function DashboardContent({ session }: DashboardProps) {
                         </Card>
                       )
                     })}
-                  </div>
+                    </StaggeredTransition>
                 )}
+                </LoadingStateDisplay>
               </CardContent>
             </Card>
           </div>
@@ -687,5 +721,6 @@ export function DashboardContent({ session }: DashboardProps) {
         </div>
       )}
     </div>
+    </PageTransition>
   )
 }

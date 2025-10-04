@@ -2,6 +2,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { redirect } from 'next/navigation'
 import { DashboardContent } from '@/components/dashboard-content'
+import { Navigation } from '@/components/navigation'
 
 export default async function DashboardPage() {
   const session = await getServerSession(authOptions)
@@ -10,5 +11,10 @@ export default async function DashboardPage() {
     redirect('/auth/signin')
   }
 
-  return <DashboardContent session={session} />
+  return (
+    <>
+      <Navigation />
+      <DashboardContent session={session} />
+    </>
+  )
 }

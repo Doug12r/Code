@@ -186,6 +186,81 @@ export default function RoomPage() {
     }
   }, [socket])
 
+  const tryAutoJoinRoom = async () => {
+    if (!roomId || !session?.user) return
+
+    try {
+      // Try to join room directly using the new join endpoint
+      const joinResponse = await fetch(`/api/rooms/${roomId}/join`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      })
+      
+      if (joinResponse.ok) {
+        toast.success('Joined room successfully!')
+        // Retry loading room data after a brief delay
+        setTimeout(() => loadRoomData(), 1000)
+        return
+      }
+
+      // If direct join failed, try fallback approach for invite codes
+      const publicRoomResponse = await fetch(`/api/rooms?roomId=${roomId}`)
+      if (publicRoomResponse.ok) {
+        const publicRoomData = await publicRoomResponse.json()
+        const publicRoom = publicRoomData.room
+        
+        if (publicRoom && publicRoom.isPublic && publicRoom.inviteCode) {
+          // Auto-join public room using its invite code
+          const inviteJoinResponse = await fetch('/api/rooms/join', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ inviteCode: publicRoom.inviteCode })
+          })
+          
+          if (inviteJoinResponse.ok) {
+            toast.success('Joined room successfully!')
+            setTimeout(() => loadRoomData(), 1000)
+            return
+          }
+        }
+      }
+      
+      // If all auto-join attempts failed, show join prompt
+      const inviteCode = prompt('Enter room invite code to join:')
+      if (inviteCode) {
+        await joinRoomWithCode(inviteCode)
+      } else {
+        setError('Room access requires an invite code')
+      }
+    } catch (error) {
+      console.error('Auto-join failed:', error)
+      setError('Failed to join room. Please try entering an invite code.')
+    }
+  }
+
+  const joinRoomWithCode = async (inviteCode: string) => {
+    try {
+      const response = await fetch('/api/rooms/join', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ inviteCode: inviteCode.toUpperCase() })
+      })
+      
+      if (response.ok) {
+        toast.success('Successfully joined room!')
+        loadRoomData() // Reload room data after joining
+      } else {
+        const error = await response.json()
+        toast.error(error.error || 'Failed to join room')
+        setError(error.error || 'Failed to join room')
+      }
+    } catch (error) {
+      console.error('Join room error:', error)
+      toast.error('Failed to join room')
+      setError('Failed to join room')
+    }
+  }
+
   const loadRoomData = async () => {
     if (!roomId || !session?.user) return
 
@@ -194,7 +269,9 @@ export default function RoomPage() {
       const roomResponse = await fetch(`/api/rooms/${roomId}`)
       if (!roomResponse.ok) {
         if (roomResponse.status === 404) {
-          setError('Room not found')
+          // User is not a member of this room, try to auto-join if it's public
+          await tryAutoJoinRoom()
+          return
         } else if (roomResponse.status === 403) {
           setError('Access denied to this room')
         } else {

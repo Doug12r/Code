@@ -5,8 +5,18 @@ FROM node:18-alpine AS base
 RUN apk add --no-cache \
     libc6-compat \
     curl \
+    ca-certificates \
     ffmpeg \
-    dumb-init
+    dumb-init \
+    tini \
+    && rm -rf /var/cache/apk/*
+
+# Set security-focused environment variables
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV NPM_CONFIG_UPDATE_NOTIFIER=false
+ENV NPM_CONFIG_FUND=false
+ENV NPM_CONFIG_AUDIT=false
 
 # Dependencies stage - install all dependencies including dev
 FROM base AS deps
@@ -32,15 +42,21 @@ RUN npm run build
 FROM base AS runner
 WORKDIR /app
 
-# Set production environment
+# Set production environment variables
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
+ENV NODE_OPTIONS="--max-old-space-size=2048"
 
-# Create system user for security
-RUN addgroup --system --gid 1001 nodejs
-RUN adduser --system --uid 1001 nextjs
+# Create system user for security (non-root execution)
+RUN addgroup --system --gid 1001 nodejs && \
+    adduser --system --uid 1001 nextjs --ingroup nodejs
+
+# Create necessary directories with proper permissions
+RUN mkdir -p /app/.next/cache && \
+    mkdir -p /app/logs && \
+    chown -R nextjs:nodejs /app
 
 # Install production dependencies only
 COPY package.json package-lock.json ./
@@ -66,10 +82,23 @@ USER nextjs
 
 EXPOSE 3000
 
-# Enhanced health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+# Enhanced health check with comprehensive monitoring
+HEALTHCHECK --interval=15s --timeout=5s --start-period=60s --retries=5 \
   CMD curl -f http://localhost:3000/api/health || exit 1
 
-# Use dumb-init for proper signal handling in containers
-ENTRYPOINT ["dumb-init", "--"]
+# Security: Drop all capabilities and add only necessary ones
+RUN apk add --no-cache shadow && \
+    usermod -u 1001 nextjs && \
+    groupmod -g 1001 nodejs
+
+# Use tini for proper signal handling and zombie reaping
+ENTRYPOINT ["tini", "--"]
 CMD ["node", "server.js"]
+
+# Add labels for better container management
+LABEL \
+  org.opencontainers.image.title="Plex Watch Together" \
+  org.opencontainers.image.description="Synchronized video watching application" \
+  org.opencontainers.image.vendor="Plex Watch Together Team" \
+  org.opencontainers.image.source="https://github.com/your-username/plex-watch-together" \
+  maintainer="team@plexwatchtogether.com"

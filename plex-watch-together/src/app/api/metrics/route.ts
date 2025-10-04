@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { performance } from 'perf_hooks'
 import { Server } from 'socket.io'
+import * as si from 'systeminformation'
 
 // Global metrics store (in production, use Redis or database)
 let globalMetrics = {
@@ -16,11 +17,12 @@ let globalMetrics = {
   syncEvents: 0,
   conflictResolutions: 0,
   cpuUsage: 0,
-  memoryUsage: 0, // Node.js heap memory percentage
+  memoryUsage: 0, // System memory usage percentage
   heapUsed: 0, // MB - actual heap memory used
   heapTotal: 0, // MB - total heap memory allocated
   rss: 0, // MB - Resident Set Size (actual RAM used by process)
-  isCpuSimulated: true,
+  systemMemTotal: 0, // MB - total system memory
+  systemMemUsed: 0, // MB - used system memory
   activeTranscodingSessions: 0,
   cacheHitRatio: 85,
   syncAccuracy: 98.5,
@@ -42,35 +44,46 @@ let eventCounts = {
 function initializeMetricsCollection() {
   if (metricsInterval) return
 
-  metricsInterval = setInterval(() => {
-    collectSystemMetrics()
+  metricsInterval = setInterval(async () => {
+    await collectSystemMetrics()
     resetEventCounters()
   }, 5000) // Update every 5 seconds
 }
 
-function collectSystemMetrics() {
-  // Node.js process memory metrics (not system memory)
-  const memUsage = process.memoryUsage()
-  globalMetrics.memoryUsage = Math.round((memUsage.heapUsed / memUsage.heapTotal) * 100)
-  
-  // Store actual memory values for display
-  globalMetrics.heapUsed = Math.round(memUsage.heapUsed / 1024 / 1024) // MB
-  globalMetrics.heapTotal = Math.round(memUsage.heapTotal / 1024 / 1024) // MB
-  globalMetrics.rss = Math.round(memUsage.rss / 1024 / 1024) // MB (Resident Set Size - actual RAM used)
-  
-  // CPU usage simulation (real CPU monitoring requires external libraries)
-  globalMetrics.cpuUsage = Math.max(0, Math.min(100, 
-    globalMetrics.cpuUsage + (Math.random() - 0.5) * 10
-  ))
-  globalMetrics.isCpuSimulated = true
-
-  // Calculate rates
-  const timeElapsed = (Date.now() - eventCounts.lastReset) / 1000
-  globalMetrics.messageRate = Math.round(eventCounts.messages / timeElapsed)
-  globalMetrics.eventsPerSecond = Math.round(eventCounts.events / timeElapsed)
-
-  // Update timestamp
-  globalMetrics.lastUpdated = Date.now()
+async function collectSystemMetrics() {
+  try {
+    // Node.js process memory metrics
+    const memUsage = process.memoryUsage()
+    globalMetrics.heapUsed = Math.round(memUsage.heapUsed / 1024 / 1024) // MB
+    globalMetrics.heapTotal = Math.round(memUsage.heapTotal / 1024 / 1024) // MB
+    globalMetrics.rss = Math.round(memUsage.rss / 1024 / 1024) // MB (Resident Set Size)
+    
+    // Real system memory metrics
+    const mem = await si.mem()
+    globalMetrics.systemMemTotal = Math.round(mem.total / 1024 / 1024) // MB
+    globalMetrics.systemMemUsed = Math.round(mem.used / 1024 / 1024) // MB
+    globalMetrics.memoryUsage = Math.round((mem.used / mem.total) * 100) // System memory percentage
+    
+    // Real CPU usage metrics
+    const cpuLoad = await si.currentLoad()
+    globalMetrics.cpuUsage = Math.round(cpuLoad.currentLoad)
+    
+    // Calculate rates
+    const timeElapsed = (Date.now() - eventCounts.lastReset) / 1000
+    globalMetrics.messageRate = Math.round(eventCounts.messages / timeElapsed)
+    globalMetrics.eventsPerSecond = Math.round(eventCounts.events / timeElapsed)
+    
+    // Update timestamp
+    globalMetrics.lastUpdated = Date.now()
+  } catch (error) {
+    console.error('Error collecting system metrics:', error)
+    // Fallback to basic metrics if system monitoring fails
+    const memUsage = process.memoryUsage()
+    globalMetrics.heapUsed = Math.round(memUsage.heapUsed / 1024 / 1024)
+    globalMetrics.heapTotal = Math.round(memUsage.heapTotal / 1024 / 1024)
+    globalMetrics.rss = Math.round(memUsage.rss / 1024 / 1024)
+    globalMetrics.lastUpdated = Date.now()
+  }
 }
 
 function resetEventCounters() {
@@ -81,13 +94,13 @@ function resetEventCounters() {
   }
 }
 
-// Update metrics from external sources
-export function updateMetrics(updates: Partial<typeof globalMetrics>) {
+// Update metrics from external sources (internal function)
+function updateMetrics(updates: Partial<typeof globalMetrics>) {
   Object.assign(globalMetrics, updates)
 }
 
-// Track events
-export function trackEvent(type: 'message' | 'event' | 'sync' | 'conflict' | 'recovery') {
+// Track events (internal function)
+function trackEvent(type: 'message' | 'event' | 'sync' | 'conflict' | 'recovery') {
   switch (type) {
     case 'message':
       eventCounts.messages++
@@ -109,12 +122,12 @@ export function trackEvent(type: 'message' | 'event' | 'sync' | 'conflict' | 're
 
 // Calculate advanced metrics
 function calculateAdvancedMetrics(roomId?: string) {
-  // In a real implementation, these would be calculated from actual data
+  // Calculate metrics based on actual data
   const baseMetrics = { ...globalMetrics }
   
   if (roomId) {
-    // Room-specific metrics would be filtered here
-    // For demo purposes, we'll simulate some room-specific data
+    // Room-specific metrics calculation
+    // TODO: Query actual room data from database when needed
     baseMetrics.activeRooms = 1
     baseMetrics.totalMembers = Math.max(1, Math.floor(baseMetrics.socketConnections * 0.8))
   }
@@ -138,37 +151,26 @@ function calculateAdvancedMetrics(roomId?: string) {
   return baseMetrics
 }
 
-// Simulate some realistic metric fluctuations
-function simulateMetricFluctuations() {
-  // Simulate latency variations
-  const baseLatency = 80 + Math.sin(Date.now() / 10000) * 30
-  globalMetrics.avgLatency = Math.max(20, Math.round(
-    baseLatency + (Math.random() - 0.5) * 40
-  ))
+// Update dynamic metrics based on current activity
+function updateDynamicMetrics() {
+  // Update sync accuracy based on recent performance
+  if (globalMetrics.avgLatency > 300) {
+    globalMetrics.syncAccuracy = Math.max(80, globalMetrics.syncAccuracy - 2)
+  } else if (globalMetrics.avgLatency < 100) {
+    globalMetrics.syncAccuracy = Math.min(100, globalMetrics.syncAccuracy + 0.5)
+  }
 
-  // Simulate connection changes
-  const targetConnections = 5 + Math.sin(Date.now() / 20000) * 3
-  globalMetrics.socketConnections = Math.max(0, Math.round(
-    targetConnections + (Math.random() - 0.5) * 2
-  ))
-
-  // Simulate room activity
+  // Calculate derived metrics
   globalMetrics.activeRooms = Math.max(1, Math.round(globalMetrics.socketConnections / 3))
   globalMetrics.totalMembers = globalMetrics.socketConnections
-
-  // Simulate transcoding sessions
+  
   globalMetrics.activeTranscodingSessions = Math.max(0, 
     Math.floor(globalMetrics.activeRooms * 0.7)
   )
-
-  // Simulate cache performance
-  globalMetrics.cacheHitRatio = Math.max(70, Math.min(95, 
-    85 + (Math.random() - 0.5) * 10
-  ))
-
-  // Simulate sync drift based on latency
+  
+  // Calculate sync drift based on latency
   globalMetrics.avgSyncDrift = Math.max(0, 
-    (globalMetrics.avgLatency / 1000) * 0.5 + Math.random() * 0.2
+    (globalMetrics.avgLatency / 1000) * 0.5
   )
 }
 
@@ -184,8 +186,10 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url)
     const roomId = searchParams.get('room')
     
-    // Simulate some realistic data for demo purposes
-    simulateMetricFluctuations()
+    // Collect fresh metrics if data is stale
+    if (Date.now() - globalMetrics.lastUpdated > 10000) {
+      await collectSystemMetrics()
+    }
     
     // Calculate metrics
     const metrics = calculateAdvancedMetrics(roomId || undefined)

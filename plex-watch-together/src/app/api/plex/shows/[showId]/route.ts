@@ -7,8 +7,9 @@ import { decryptToken } from '@/lib/encryption';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { showId: string } }
+  { params }: { params: Promise<{ showId: string }> }
 ) {
+  const { showId } = await params
   try {
     const session = await getServerSession(authOptions);
     if (!session?.user?.email) {

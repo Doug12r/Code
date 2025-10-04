@@ -188,7 +188,7 @@ export default function EpisodeSelectionModal({
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-6xl max-h-[90vh] overflow-hidden flex flex-col">
+      <DialogContent className="max-w-6xl h-[90vh] flex flex-col overflow-hidden">
         <DialogHeader className="flex-shrink-0">
           <DialogTitle className="flex items-center gap-2">
             <Tv className="h-5 w-5" />
@@ -208,8 +208,8 @@ export default function EpisodeSelectionModal({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex-1 overflow-hidden">
-          <ScrollArea className="h-full">
+        <div className="flex-1 overflow-auto">
+          <div className="p-6 pt-0">
             {error && (
               <div className="text-destructive text-sm p-3 bg-destructive/10 rounded-md mb-4">
                 <div className="flex items-center justify-between">
@@ -406,7 +406,7 @@ export default function EpisodeSelectionModal({
                 </p>
               </div>
             )}
-          </ScrollArea>
+          </div>
         </div>
       </DialogContent>
     </Dialog>
