@@ -140,7 +140,8 @@ export function useSocket({
         forceNew: false,
         multiplex: true,
         upgrade: true,
-        transports: ['websocket', 'polling']
+        transports: ['polling', 'websocket'], // Prioritize polling first
+        forceBase64: false
       })
     } catch (error) {
       console.log('🔄 Socket.io connection failed, using simulation mode')

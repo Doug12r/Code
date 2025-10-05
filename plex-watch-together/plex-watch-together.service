@@ -1,0 +1,15 @@
+[Unit]
+Description=Plex Watch Together
+After=network.target
+
+[Service]
+Type=simple
+User=rize
+WorkingDirectory=/home/rize/Code/plex-watch-together
+ExecStart=/home/rize/Code/plex-watch-together/start-server.sh
+Restart=always
+RestartSec=5
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target
