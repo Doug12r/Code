@@ -1,7 +1,7 @@
 name: plex-watch-together
 services:
   - name: web
-    source_dir: /
+    source_dir: /plex-watch-together
     github:
       repo: doug12r/Code
       branch: main
@@ -29,7 +29,7 @@ services:
       - key: NEXTAUTH_URL
         value: ${APP_URL}
       - key: NEXTAUTH_SECRET
-        value: REPLACE_WITH_32_CHAR_SECRET
+        value: "66c7557973c01eaa5bf1f309dd5d4dc2"
       - key: DATABASE_URL
         value: ${db.DATABASE_URL}
       - key: SKIP_ENV_VALIDATION
@@ -41,6 +41,10 @@ databases:
     version: "15"
     size_slug: db-s-dev-database
     num_nodes: 1
+
+domains:
+  - domain: plexwatch.duckdns.org
+    type: PRIMARY
 
 static_sites: []
 workers: []
