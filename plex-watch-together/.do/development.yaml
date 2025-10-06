@@ -1,0 +1,51 @@
+# Development App Platform Configuration
+name: plex-watch-together-dev
+services:
+  - name: web
+    source_dir: /
+    github:
+      repo: doug12r/Code
+      branch: develop  # Deploy from develop branch
+      deploy_on_push: true
+    build_command: |
+      npm ci
+      npx prisma generate
+      npm run build
+    run_command: node server.js
+    environment_slug: node-js
+    instance_count: 1
+    instance_size_slug: basic-xxs
+    http_port: 3001
+    routes:
+      - path: /
+    health_check:
+      http_path: /api/health
+      initial_delay_seconds: 60
+      period_seconds: 30
+      timeout_seconds: 10
+      failure_threshold: 3
+      success_threshold: 2
+    envs:
+      - key: NODE_ENV
+        value: development
+      - key: PORT
+        value: "3001"
+      - key: NEXTAUTH_URL
+        value: ${APP_URL}
+      - key: NEXTAUTH_SECRET
+        value: REPLACE_WITH_32_CHAR_SECRET
+      - key: DATABASE_URL
+        value: ${db.DATABASE_URL}
+      - key: LOG_LEVEL
+        value: debug
+
+databases:
+  - name: db
+    engine: PG
+    version: "15"
+    size_slug: db-s-dev-database  # Smaller database for development
+    num_nodes: 1
+
+static_sites: []
+workers: []
+jobs: []
