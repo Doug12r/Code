@@ -3,13 +3,16 @@ import { getCachingService } from './caching-service'
 
 // Enhanced Prisma client with production optimizations
 const createPrismaClient = () => {
+  // Handle build-time when DATABASE_URL might not be available
+  const databaseUrl = process.env.DATABASE_URL || 'file:./dev.db'
+  
   return new PrismaClient({
     log: process.env.NODE_ENV === 'development' 
       ? ['query', 'error', 'warn'] 
       : ['error'],
     datasources: {
       db: {
-        url: process.env.DATABASE_URL
+        url: databaseUrl
       }
     }
   })

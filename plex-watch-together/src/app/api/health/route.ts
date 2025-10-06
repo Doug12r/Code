@@ -1,20 +1,20 @@
 import { NextResponse } from 'next/server'
-import { PrismaClient } from '@prisma/client'
-
-const prisma = new PrismaClient()
+import { getDatabaseService } from '@/lib/prisma'
 
 export async function GET() {
   try {
-    // Check database connectivity
-    await prisma.$queryRaw`SELECT 1`
+    // Use the shared database service for health checks
+    const dbService = getDatabaseService()
+    const healthCheck = await dbService.healthCheck()
     
     return NextResponse.json({ 
-      status: 'healthy',
+      status: healthCheck.status,
       timestamp: new Date().toISOString(),
       uptime: process.uptime(),
       memory: process.memoryUsage(),
       version: process.env.npm_package_version || '1.0.0',
-      database: 'connected'
+      database: healthCheck.status,
+      latency: healthCheck.latency
     })
   } catch (error) {
     console.error('Health check failed:', error)
@@ -22,11 +22,9 @@ export async function GET() {
       { 
         status: 'unhealthy',
         timestamp: new Date().toISOString(),
-        error: 'Database connection failed'
+        error: error instanceof Error ? error.message : 'Health check failed'
       },
       { status: 503 }
     )
-  } finally {
-    await prisma.$disconnect()
   }
 }

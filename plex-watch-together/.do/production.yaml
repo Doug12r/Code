@@ -9,6 +9,7 @@ services:
       deploy_on_push: true
     build_command: |
       npm ci --only=production
+      export DATABASE_URL="file:./build.db"
       npx prisma generate
       npm run build
     run_command: node server.js
