@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Plex Watch Together - Extension Test</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #1a1a1a;
+            color: #e5e5e5;
+        }
+        .container {
+            background: #2a2a2a;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        .status {
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+        .status.success { background: #0d5016; color: #4ade80; }
+        .status.error { background: #501414; color: #f87171; }
+        .status.warning { background: #451a03; color: #fbbf24; }
+        button {
+            background: #e5a00d;
+            color: #000;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover { background: #f59e0b; }
+        button:disabled { background: #374151; color: #6b7280; cursor: not-allowed; }
+        input {
+            background: #374151;
+            color: #e5e5e5;
+            border: 1px solid #4b5563;
+            padding: 8px 12px;
+            border-radius: 4px;
+            margin: 5px;
+        }
+        .test-section {
+            border: 1px solid #374151;
+            border-radius: 6px;
+            padding: 15px;
+            margin: 15px 0;
+        }
+        .log {
+            background: #111;
+            border: 1px solid #333;
+            border-radius: 4px;
+            padding: 10px;
+            font-family: 'Monaco', 'Consolas', monospace;
+            font-size: 12px;
+            max-height: 200px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+        }
+    </style>
+</head>
+<body>
+    <h1>🎬 Plex Watch Together - Extension Test</h1>
+    
+    <div class="container">
+        <h2>Extension Status Check</h2>
+        <div id="extension-status" class="status warning">Checking extension...</div>
+        <div id="content-script-status" class="status warning">Checking content script...</div>
+        <div id="webrtc-status" class="status warning">Checking WebRTC manager...</div>
+    </div>
+
+    <div class="container">
+        <h2>Basic Functionality Test</h2>
+        <div class="test-section">
+            <h3>Room Management</h3>
+            <input type="text" id="test-username" placeholder="Enter test username" value="TestUser">
+            <button id="create-test-room">Create Test Room</button>
+            <button id="join-test-room" disabled>Join Test Room</button>
+            <div id="room-info"></div>
+        </div>
+
+        <div class="test-section">
+            <h3>Video Player Detection</h3>
+            <button id="detect-player">Detect Video Player</button>
+            <div id="player-info"></div>
+        </div>
+
+        <div class="test-section">
+            <h3>Message Communication</h3>
+            <button id="test-messaging">Test Content Script Messaging</button>
+            <div id="message-result"></div>
+        </div>
+    </div>
+
+    <div class="container">
+        <h2>Console Log</h2>
+        <div id="console-log" class="log"></div>
+        <button id="clear-log">Clear Log</button>
+    </div>
+
+    <script>
+        // Logging system
+        const logElement = document.getElementById('console-log')
+        const originalConsoleLog = console.log
+        const originalConsoleError = console.error
+        const originalConsoleWarn = console.warn
+
+        function addToLog(message, type = 'log') {
+            const timestamp = new Date().toLocaleTimeString()
+            const logLine = `[${timestamp}] ${type.toUpperCase()}: ${message}\n`
+            logElement.textContent += logLine
+            logElement.scrollTop = logElement.scrollHeight
+        }
+
+        console.log = function(...args) {
+            originalConsoleLog.apply(console, args)
+            addToLog(args.join(' '), 'log')
+        }
+
+        console.error = function(...args) {
+            originalConsoleError.apply(console, args)
+            addToLog(args.join(' '), 'error')
+        }
+
+        console.warn = function(...args) {
+            originalConsoleWarn.apply(console, args)
+            addToLog(args.join(' '), 'warn')
+        }
+
+        // Clear log function
+        document.getElementById('clear-log').addEventListener('click', () => {
+            logElement.textContent = ''
+        })
+
+        // Status checking functions
+        function updateStatus(elementId, success, message) {
+            const element = document.getElementById(elementId)
+            element.className = `status ${success ? 'success' : 'error'}`
+            element.textContent = message
+        }
+
+        // Check extension components
+        function checkExtensionStatus() {
+            console.log('Checking extension status...')
+            
+            // Check if we're in a browser extension context
+            const hasExtensionAPI = typeof chrome !== 'undefined' || typeof browser !== 'undefined'
+            updateStatus('extension-status', hasExtensionAPI, 
+                hasExtensionAPI ? '✅ Extension API available' : '❌ Extension API not found')
+
+            // Check content script
+            const hasContentScript = typeof window.plexWatchTogetherContentScript !== 'undefined'
+            updateStatus('content-script-status', hasContentScript,
+                hasContentScript ? '✅ Content script loaded' : '❌ Content script not found')
+
+            // Check WebRTC manager
+            const hasWebRTC = typeof window.PlexWatchTogetherWebRTC !== 'undefined'
+            updateStatus('webrtc-status', hasWebRTC,
+                hasWebRTC ? '✅ WebRTC manager available' : '❌ WebRTC manager not found')
+
+            return { hasExtensionAPI, hasContentScript, hasWebRTC }
+        }
+
+        // Test room creation
+        document.getElementById('create-test-room').addEventListener('click', async () => {
+            const username = document.getElementById('test-username').value.trim()
+            if (!username) {
+                alert('Please enter a username')
+                return
+            }
+
+            try {
+                console.log('Creating test room...')
+                if (window.PlexWatchTogetherWebRTC) {
+                    const manager = new window.PlexWatchTogetherWebRTC('test-' + Date.now(), username)
+                    const roomId = await manager.createRoom()
+                    
+                    document.getElementById('room-info').innerHTML = `
+                        <div class="status success">Room created: ${roomId}</div>
+                        <div>Host: ${username}</div>
+                        <div>User ID: ${manager.userId}</div>
+                    `
+                    
+                    document.getElementById('join-test-room').disabled = false
+                    console.log('Room created successfully:', roomId)
+                } else {
+                    throw new Error('WebRTC manager not available')
+                }
+            } catch (error) {
+                console.error('Failed to create room:', error)
+                document.getElementById('room-info').innerHTML = `
+                    <div class="status error">Failed to create room: ${error.message}</div>
+                `
+            }
+        })
+
+        // Test player detection
+        document.getElementById('detect-player').addEventListener('click', () => {
+            console.log('Detecting video player...')
+            
+            const videoElements = document.querySelectorAll('video')
+            const playerInfo = document.getElementById('player-info')
+            
+            if (videoElements.length > 0) {
+                let info = `<div class="status success">Found ${videoElements.length} video element(s)</div>`
+                videoElements.forEach((video, index) => {
+                    info += `<div>Video ${index + 1}: ${video.currentTime.toFixed(2)}s / ${video.duration.toFixed(2)}s</div>`
+                })
+                playerInfo.innerHTML = info
+            } else {
+                playerInfo.innerHTML = '<div class="status warning">No video elements found</div>'
+            }
+        })
+
+        // Test messaging
+        document.getElementById('test-messaging').addEventListener('click', () => {
+            console.log('Testing content script messaging...')
+            
+            if (window.plexWatchTogetherContentScript) {
+                // Send a test message
+                window.postMessage({
+                    type: 'PLEX_WATCH_TOGETHER_TEST',
+                    data: { message: 'Hello from test page' }
+                }, '*')
+                
+                document.getElementById('message-result').innerHTML = 
+                    '<div class="status success">Test message sent to content script</div>'
+            } else {
+                document.getElementById('message-result').innerHTML = 
+                    '<div class="status error">Content script not available</div>'
+            }
+        })
+
+        // Listen for messages from content script
+        window.addEventListener('message', (event) => {
+            if (event.data.type === 'PLEX_WATCH_TOGETHER_TEST_RESPONSE') {
+                console.log('Received response from content script:', event.data)
+                document.getElementById('message-result').innerHTML += 
+                    '<div class="status success">Received response from content script</div>'
+            }
+        })
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            console.log('Extension test page loaded')
+            
+            // Check status immediately and then periodically
+            checkExtensionStatus()
+            setInterval(checkExtensionStatus, 2000)
+        })
+
+        // Listen for WebRTC manager ready event
+        window.addEventListener('plexWatchTogetherReady', () => {
+            console.log('Plex Watch Together WebRTC manager is ready!')
+            checkExtensionStatus()
+        })
+    </script>
+</body>
+</html>

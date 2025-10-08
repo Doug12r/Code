@@ -1,0 +1,39 @@
+{
+  "manifest_version": 2,
+  "name": "Plex Watch Together",
+  "version": "1.0.0",
+  "description": "Watch Plex media together with friends using peer-to-peer synchronization",
+  "icons": {
+    "48": "assets/icon-48.png",
+    "96": "assets/icon-96.png"
+  },
+  "permissions": [
+    "activeTab",
+    "storage",
+    "https://app.plex.tv/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://app.plex.tv/*"],
+      "js": ["src/content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "background": {
+    "scripts": ["src/background.js"],
+    "persistent": false
+  },
+  "browser_action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "Plex Watch Together"
+  },
+  "web_accessible_resources": [
+    "src/injected.js"
+  ],
+  "applications": {
+    "gecko": {
+      "id": "plex-watch-together@example.com",
+      "strict_min_version": "70.0"
+    }
+  }
+}
